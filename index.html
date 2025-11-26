@@ -1,638 +1,852 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, query, onSnapshot, addDoc, serverTimestamp, doc, deleteDoc, getDocs, setDoc } from 'firebase/firestore';
-import { Send, User, Trash2, Loader, MessageSquare, AlertTriangle, Settings, Code, Zap, Users, Database, Edit, Crown, List, X, RefreshCw } from 'lucide-react'; 
-
-// --- Firebase Global Variables (Mandatory) ---
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-// --- Constants ---
-const VERSION = "1.9.1"; // Reverted UI Style
-const COOLDOWN_DURATION = 5;
-const SUPER_ADMIN_ID = "15152491164772220861"; 
-const ONLINE_THRESHOLD_SECONDS = 30;
-const PRESENCE_UPDATE_INTERVAL = 10000;
-const MAX_NICKNAME_LENGTH = 12;
-const ADMIN_NICKNAME = "管理員";
-
-// --- Path Helpers ---
-const MESSAGE_COL_PATH = (appId) => `/artifacts/${appId}/public/data/messages`;
-const CONFIG_DOC_PATH = (appId) => `/artifacts/${appId}/public/data/config/general`;
-const BLOCKED_USERS_DOC_PATH = (appId) => `/artifacts/${appId}/public/data/config/blockedUsers`;
-const PRESENCE_COL_PATH = (appId) => `/artifacts/${appId}/public/data/presence`;
-const USER_PROFILE_COL_PATH = (appId) => `/artifacts/${appId}/public/data/user_profiles`;
-
-// --- Utility ---
-const isSuperAdmin = (userId) => userId === SUPER_ADMIN_ID;
-const debounce = (func, delay) => {
-    let timeoutId;
-    return (...args) => {
-        if (timeoutId) clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => func.apply(this, args), delay);
-    };
-};
-
-// --- Styles ---
-const GlobalStyles = () => (
-    <>
-        <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap" rel="stylesheet" />
-        <style jsx="true">{`
-            body {
-                font-family: 'Inter', 'Noto Sans TC', sans-serif;
-                background-color: #f7f7f7; /* Lighter background */
-                color: #1f2937;
-            }
-            .classic-card {
-                background: #FFFFFF;
-                border-radius: 12px;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
-            }
-            .classic-input {
-                background: #f9fafb;
-                border: 1px solid #e5e7eb;
-                transition: all 0.2s ease;
-            }
-            .classic-input:focus {
-                border-color: #3b82f6; /* Blue 500 */
-                box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
-            }
-            .marquee-container {
-                animation: marquee 20s linear infinite; 
-            }
-            @keyframes marquee {
-                0%   { transform: translateX(100%); }
-                100% { transform: translateX(-100%); }
-            }
-            .break-all-id { word-break: break-all; }
-        `}</style>
-    </>
-);
-
-// --- Sub-Components (Extracted for Performance & Readability) ---
-
-const UserProfileSection = ({ userId, isAdmin, nickname, onUpdateNickname }) => {
-    const [isEditing, setIsEditing] = useState(false);
-    const [tempName, setTempName] = useState(nickname);
-    const [msg, setMsg] = useState(null);
-
-    useEffect(() => { setTempName(nickname); }, [nickname]);
-
-    const handleSave = async () => {
-        const res = await onUpdateNickname(tempName);
-        if (res.success) {
-            setIsEditing(false);
-            setMsg({ type: 'success', text: '已儲存' });
-        } else {
-            setMsg({ type: 'error', text: res.error });
-        }
-        setTimeout(() => setMsg(null), 3000);
-    };
-
-    if (!userId) return null;
-
-    return (
-        <div className="mt-4 p-5 classic-card flex flex-col gap-3">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-                <span className="font-semibold text-gray-600 text-sm">我的暱稱</span>
-                
-                {isAdmin ? (
-                     <div className="flex items-center space-x-2 bg-yellow-100 text-yellow-800 px-3 py-1.5 rounded-full font-bold">
-                        <Crown size={14} className="text-yellow-600 fill-yellow-600" />
-                        <span>{ADMIN_NICKNAME}</span>
-                    </div>
-                ) : (
-                    isEditing ? (
-                        <div className="flex items-center gap-2 animate-in fade-in zoom-in duration-200">
-                            <input
-                                type="text"
-                                value={tempName}
-                                onChange={(e) => setTempName(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-                                className="classic-input px-3 py-1.5 rounded-lg text-sm w-32 focus:outline-none"
-                                placeholder="輸入暱稱"
-                                maxLength={MAX_NICKNAME_LENGTH}
-                                autoFocus
-                            />
-                            <button onClick={handleSave} className="p-1.5 bg-green-500 text-white rounded-full hover:bg-green-600 transition-colors"><RefreshCw size={14}/></button>
-                            <button onClick={() => { setIsEditing(false); setTempName(nickname); }} className="p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors"><X size={14}/></button>
-                        </div>
-                    ) : (
-                        <button onClick={() => setIsEditing(true)} className="group flex items-center space-x-2 bg-gray-100 px-3 py-1.5 rounded-full hover:bg-blue-50 transition-colors">
-                            <span className="font-bold text-gray-900">{nickname}</span>
-                            <Edit size={14} className="text-gray-400 group-hover:text-blue-500" />
-                        </button>
-                    )
-                )}
-            </div>
-            {msg && <div className={`text-xs text-center font-medium ${msg.type === 'error' ? 'text-red-500' : 'text-green-500'}`}>{msg.text}</div>}
-            <div className="text-[10px] font-mono text-gray-400 border-t border-gray-200 pt-3 flex justify-between items-center">
-                <span>用戶 ID</span>
-                <span className="break-all-id text-gray-500 select-all">{userId}</span>
-            </div>
-        </div>
-    );
-};
-
-const MessageItem = React.memo(({ message, currentUserId, currentUserIsAdmin, config, blockedUsers, onToggleBlock, onDelete }) => {
-    const isOwner = message.userId === currentUserId;
-    const isAuthorAdmin = isSuperAdmin(message.userId) || config.adminUserIds.includes(message.userId); 
-    const canDelete = isOwner || currentUserIsAdmin; 
-    const isTargetBlocked = blockedUsers.includes(message.userId); 
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>即時公共留言板</title>
     
-    const timeString = message.timestamp?.toLocaleString 
-        ? message.timestamp.toLocaleString('zh-TW', { hour: '2-digit', minute: '2-digit' }) 
-        : '發送中...';
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Google Fonts: Noto Sans TC -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
 
-    const bubbleStyle = isOwner 
-        ? 'bg-blue-500 text-white rounded-br-none shadow-md' 
-        : 'bg-white text-gray-800 rounded-bl-none border border-gray-200 shadow-sm';
+    <style>
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+        }
+        .marquee-wrapper {
+            overflow: hidden;
+            width: 100%;
+        }
+        .marquee-container {
+            display: inline-block;
+            white-space: nowrap;
+            animation: marquee 15s linear infinite;
+        }
+        @keyframes marquee {
+            0%   { transform: translateX(100%); }
+            100% { transform: translateX(-100%); }
+        }
+        .break-all-id {
+            word-break: break-all;
+        }
+        .soft-shadow {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05), 0 10px 15px -3px rgba(0, 0, 0, 0.01);
+        }
+        /* Custom Scrollbar for better aesthetics */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #c7c7c7; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a0a0a0; 
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-800">
 
-    const alignStyle = isOwner ? 'flex-row-reverse' : 'flex-row';
-
-    return (
-        <div className={`flex ${alignStyle} items-end gap-3 mb-5 group`}>
-            {/* Avatar */}
-            <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shadow-md ${isOwner ? 'bg-blue-600 text-white' : isAuthorAdmin ? 'bg-red-500 text-white' : 'bg-gray-200 text-gray-600'}`}>
-                {isAuthorAdmin ? <Crown size={14} className="fill-white text-white"/> : <User size={14} />}
+    <div class="max-w-7xl mx-auto p-4 sm:p-8">
+        
+        <!-- Header -->
+        <header class="mb-6 pb-4 border-b-2 border-gray-100">
+            <h1 class="text-3xl sm:text-4xl font-black text-gray-900 flex items-center mb-2">
+                <i data-lucide="message-square" class="text-indigo-600 mr-3 w-8 h-8 sm:w-9 sm:h-9"></i>
+                即時公共留言板
+            </h1>
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center text-sm text-gray-500 mt-3 gap-2">
+                <p>使用 Firebase Firestore 實時同步 (HTML版)。</p>
+                <div class="flex flex-wrap gap-4 items-center">
+                    <span class="font-bold text-gray-600 flex items-center">
+                        <i data-lucide="users" class="mr-1 text-green-500 w-4 h-4"></i>
+                        在線: <span id="online-count" class="text-green-600 ml-1">0</span>
+                    </span>
+                    <span class="font-bold text-gray-600 flex items-center">
+                        <i data-lucide="database" id="server-status-icon" class="mr-1 text-gray-500 w-4 h-4"></i>
+                        伺服器: <span id="server-status-text" class="text-gray-500">連線中...</span>
+                    </span>
+                    <span class="font-bold text-gray-600 flex items-center">
+                        <i data-lucide="code" class="mr-1 w-4 h-4"></i>
+                        版本: <span id="app-version">1.8.3</span>
+                    </span>
+                </div>
             </div>
 
-            {/* Message Content */}
-            <div className={`max-w-[80%] flex flex-col ${isOwner ? 'items-end' : 'items-start'}`}>
-                <div className="flex items-center gap-2 mb-1 px-1">
-                    <span className={`text-xs font-bold ${isOwner ? 'text-gray-500' : isAuthorAdmin ? 'text-red-700' : 'text-gray-600'}`}>
-                        {message.nickname || '訪客'}
-                    </span>
-                    {currentUserIsAdmin && !isOwner && (
-                        <button onClick={() => onToggleBlock(message.userId)} className={`text-[10px] px-2 py-0.5 rounded-full font-semibold transition-colors ${isTargetBlocked ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>
-                            {isTargetBlocked ? '已封鎖' : '封鎖'}
-                        </button>
-                    )}
-                </div>
+            <!-- User Profile Section -->
+            <div id="user-profile-section" class="hidden mt-4 p-4 bg-white rounded-3xl soft-shadow border border-gray-100">
+                <div class="flex items-center justify-between flex-wrap gap-2">
+                    <div class="flex items-center">
+                        <span class="font-bold text-gray-700 text-sm flex-shrink-0 mr-4">我的暱稱:</span>
+                        
+                        <!-- View Mode -->
+                        <div id="nickname-view" class="flex items-center space-x-2">
+                            <span id="current-nickname" class="font-extrabold text-indigo-800 text-base">訪客</span>
+                            <span id="admin-badge" class="hidden text-xs text-gray-500 flex items-center"><i data-lucide="crown" class="w-4 h-4 text-yellow-500 fill-yellow-500/50 ml-1"></i> (固定)</span>
+                            <button id="btn-edit-nickname" class="p-1 text-indigo-500 hover:text-indigo-700 rounded-full hover:bg-indigo-100 transition-colors">
+                                <i data-lucide="edit" class="w-4 h-4"></i>
+                            </button>
+                        </div>
 
-                <div className={`px-4 py-2.5 rounded-xl text-sm leading-relaxed whitespace-pre-wrap break-words ${bubbleStyle}`}>
-                    {message.text}
+                        <!-- Edit Mode -->
+                        <div id="nickname-edit" class="hidden flex items-center space-x-2">
+                            <input type="text" id="input-nickname" class="p-2 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 text-sm soft-shadow w-32 sm:w-48" placeholder="輸入暱稱" maxlength="12">
+                            <button id="btn-save-nickname" class="px-3 py-1 bg-indigo-600 text-white font-bold rounded-xl soft-shadow hover:bg-indigo-700 transition-colors text-sm">儲存</button>
+                            <button id="btn-cancel-nickname" class="px-3 py-1 bg-gray-300 text-gray-800 font-bold rounded-xl soft-shadow hover:bg-gray-400 transition-colors text-sm">取消</button>
+                        </div>
+                    </div>
                 </div>
-                
-                <div className="flex items-center gap-2 mt-1 px-1">
-                    <span className="text-[10px] text-gray-400">{timeString}</span>
-                    {canDelete && (
-                        <button onClick={() => onDelete(message.id, message.nickname)} className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
-                            <Trash2 size={12} />
-                        </button>
-                    )}
+                <div id="nickname-msg" class="hidden mt-2 text-xs font-medium"></div>
+                <div class="mt-3 text-xs font-mono text-gray-600 pt-3 border-t border-gray-100 break-all-id">
+                    <span class="font-bold text-gray-700">我的唯一 ID:</span> <span id="user-id-display">載入中...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Version Outdated Warning -->
+        <div id="version-warning" class="hidden p-4 bg-yellow-100 text-yellow-800 rounded-2xl border-2 border-yellow-300 flex items-center justify-between mb-6 soft-shadow flex-wrap">
+            <div class="flex items-center">
+                <i data-lucide="alert-triangle" class="mr-3 flex-shrink-0 text-yellow-600 w-5 h-5"></i>
+                <span class="font-bold text-sm">
+                    發現新版本 (<span id="server-version-display"></span>)！您目前使用的是舊版本，請更新。
+                </span>
+            </div>
+            <button onclick="window.location.reload()" class="ml-4 mt-2 sm:mt-0 px-4 py-2 bg-yellow-500 text-white font-bold rounded-xl shadow-md hover:bg-yellow-600 transition-colors flex items-center text-sm flex-shrink-0">
+                <i data-lucide="refresh-cw" class="mr-2 w-3 h-3"></i> 重新整理
+            </button>
+        </div>
+
+        <!-- Marquee -->
+        <div class="bg-indigo-600 text-white p-3 mb-8 rounded-2xl soft-shadow overflow-hidden border border-indigo-700">
+            <div class="text-sm font-medium flex items-center">
+                <span class="text-yellow-300 font-bold mr-3 flex-shrink-0 flex items-center">
+                    <i data-lucide="zap" class="mr-1 w-3 h-3"></i> 公告:
+                </span>
+                <div class="marquee-wrapper">
+                    <div id="marquee-text" class="marquee-container">
+                        歡迎使用即時留言板！
+                    </div>
                 </div>
             </div>
         </div>
-    );
-});
 
-const OnlineUsersList = ({ onlineUsers, currentUserId }) => (
-    <div className="classic-card p-5 h-full max-h-[calc(100vh-100px)] flex flex-col">
-        <h2 className="text-md font-extrabold text-gray-700 mb-4 flex items-center border-b pb-3 border-gray-200">
-            <List size={18} className="mr-2 text-green-500" /> 在線用戶 <span className="ml-auto bg-green-500 text-white px-3 py-1 rounded-full text-sm">{onlineUsers.length}</span>
-        </h2>
-        <div className="flex-1 overflow-y-auto pr-1 space-y-2 custom-scrollbar">
-            {onlineUsers.length === 0 ? (
-                <div className="text-center py-10 text-gray-400 text-xs">沒有其他人在線</div>
-            ) : (
-                onlineUsers.map(user => (
-                    <div key={user.id} className={`flex items-center justify-between p-3 rounded-lg transition-all ${user.id === currentUserId ? 'bg-blue-100/70 shadow-sm' : 'hover:bg-gray-50'}`}>
-                        <div className="flex items-center gap-3 min-w-0">
-                            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${user.id === currentUserId ? 'bg-blue-600' : 'bg-green-500 shadow-md'}`}></div>
-                            <div className="flex flex-col min-w-0">
-                                <span className={`text-sm font-semibold truncate flex items-center gap-1 ${user.isAdmin ? 'text-red-600' : 'text-gray-800'}`}>
-                                    {user.nickname}
-                                    {user.isAdmin && <Crown size={12} className="fill-red-600" />}
-                                </span>
-                                <span className="text-[10px] text-gray-500 font-mono truncate w-20">{user.id.substring(0, 8)}...</span>
+        <div class="flex flex-col lg:flex-row lg:space-x-8">
+            
+            <!-- Main Content -->
+            <div class="lg:w-2/3 w-full">
+                
+                <!-- Admin Panel (Hidden by default) -->
+                <div id="admin-panel" class="hidden bg-white border-2 border-gray-100 p-6 rounded-3xl soft-shadow mb-8">
+                    <h3 class="text-xl font-extrabold text-gray-800 mb-4 pb-2 border-b border-gray-200 flex items-center">
+                        <i data-lucide="settings" class="mr-2 text-indigo-600 w-5 h-5"></i> 管理員後台
+                    </h3>
+                    <div id="admin-msg" class="hidden p-3 rounded-xl mb-4 text-sm font-medium"></div>
+
+                    <div class="space-y-6">
+                        <!-- Super Admin: Version Control -->
+                        <div id="super-admin-section" class="hidden bg-indigo-50 border border-indigo-200 p-4 rounded-2xl">
+                            <h4 class="text-md font-bold text-gray-800 mb-3 flex items-center">
+                                <i data-lucide="code" class="mr-2 text-indigo-600 w-4 h-4"></i> 應用程式版本控制
+                            </h4>
+                            <div class="flex space-x-2 mb-3">
+                                <input type="text" id="admin-version-input" class="flex-1 p-2 border border-indigo-300 rounded-xl text-sm font-mono" placeholder="版本號 (e.g., 1.8.3)">
+                                <button id="btn-update-version" class="px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl text-sm">設定</button>
+                            </div>
+                        </div>
+
+                        <!-- Maintenance Mode -->
+                        <div class="bg-gray-50 border border-gray-200 p-4 rounded-2xl">
+                            <h4 class="text-md font-bold text-gray-800 mb-3 flex items-center">
+                                <i data-lucide="database" class="mr-2 text-blue-500 w-4 h-4"></i> 系統維護模式
+                                <span id="maintenance-badge" class="ml-3 text-xs font-extrabold px-2 py-0.5 rounded-full bg-green-500 text-white">關閉</span>
+                            </h4>
+                            <div class="flex space-x-3 mb-3">
+                                <button id="btn-maint-on" class="flex-1 px-4 py-2 bg-red-500 text-white font-bold rounded-xl text-sm">開啟維護</button>
+                                <button id="btn-maint-off" class="flex-1 px-4 py-2 bg-green-500 text-white font-bold rounded-xl text-sm">解除維護</button>
+                            </div>
+                            <textarea id="admin-maint-msg" class="w-full p-2 border border-gray-300 rounded-xl text-sm" rows="2"></textarea>
+                        </div>
+
+                        <!-- Marquee Editor -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">編輯跑馬燈公告</label>
+                            <div class="flex space-x-2">
+                                <input type="text" id="admin-marquee-input" class="flex-1 p-2 border border-gray-300 rounded-xl text-sm" maxlength="100">
+                                <button id="btn-update-marquee" class="px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl text-sm flex-shrink-0">更新</button>
+                            </div>
+                        </div>
+
+                        <!-- Clear All (Super Admin) -->
+                        <div id="super-admin-clear" class="hidden">
+                            <label class="block text-sm font-medium text-red-700 mb-1">危險區域</label>
+                            <button id="btn-confirm-clear-open" class="w-full px-4 py-2 bg-red-500 text-white font-bold rounded-xl flex items-center justify-center">
+                                <i data-lucide="trash-2" class="mr-2 w-4 h-4"></i> 刪除所有留言 (不可逆)
+                            </button>
+                        </div>
+                        
+                        <!-- Blocked Users -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">封鎖名單</label>
+                            <div id="blocked-list" class="space-y-2 max-h-40 overflow-y-auto bg-gray-50 p-3 border border-gray-200 rounded-xl">
+                                <!-- Blocked users injected here -->
                             </div>
                         </div>
                     </div>
-                ))
-            )}
+                </div>
+
+                <!-- Error Display -->
+                <div id="error-box" class="hidden p-4 bg-red-100 text-red-700 rounded-xl border border-red-300 flex items-start mb-6 soft-shadow">
+                    <i data-lucide="alert-triangle" class="mr-3 mt-1 flex-shrink-0 w-5 h-5"></i>
+                    <span id="error-text" class="font-medium text-sm"></span>
+                </div>
+
+                <!-- Message Input Form -->
+                <div class="bg-white p-6 rounded-3xl soft-shadow mb-8 sticky top-4 z-10 border border-gray-100">
+                    <textarea id="message-input" class="w-full p-3 border-2 border-gray-200 rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 outline-none resize-none text-base transition duration-150" rows="3" maxlength="500" placeholder="請輸入您的留言..."></textarea>
+                    
+                    <div class="flex justify-between items-center mt-4">
+                        <div class="text-xs text-gray-400 font-mono">
+                            <span id="char-count">0</span> / 500
+                            <span class="ml-3 text-indigo-500 font-bold hidden sm:inline">(Shift + Enter 換行)</span>
+                        </div>
+                        <button id="btn-send" class="px-6 py-2 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700 transition-all duration-200 flex items-center transform hover:scale-[1.02] active:scale-100 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                            <span id="btn-send-text" class="flex items-center"><i data-lucide="send" class="mr-2 w-4 h-4"></i> 發送留言</span>
+                        </button>
+                    </div>
+
+                    <!-- Status hints -->
+                    <div id="maint-hint" class="hidden text-sm font-bold text-red-600 mt-4 p-2 bg-red-100 rounded-xl flex items-center border border-red-300">
+                        <i data-lucide="alert-triangle" class="mr-2 w-4 h-4"></i> <span id="maint-hint-text"></span>
+                    </div>
+                    <div id="blocked-hint" class="hidden text-sm font-bold text-red-600 mt-4 p-2 bg-red-100 rounded-xl flex items-center border border-red-300">
+                        <i data-lucide="alert-triangle" class="mr-2 w-4 h-4"></i> 您已被管理員封鎖。
+                    </div>
+                </div>
+
+                <!-- Message List -->
+                <div class="bg-white p-6 rounded-3xl soft-shadow border border-gray-100 min-h-[200px]">
+                    <h2 class="text-xl font-extrabold text-gray-800 mb-4 pb-2 border-b border-gray-200 flex items-center">
+                        <i data-lucide="message-square" class="mr-2 text-indigo-500 w-5 h-5"></i>
+                        所有留言 (<span id="msg-count">0</span>)
+                    </h2>
+                    
+                    <div id="loading-spinner" class="text-center py-8">
+                        <i data-lucide="loader" class="animate-spin mx-auto text-indigo-500 w-8 h-8 mb-3"></i>
+                        <p class="text-gray-500 font-medium">正在載入留言...</p>
+                    </div>
+
+                    <div id="message-container" class="space-y-4">
+                        <!-- Messages injected here -->
+                    </div>
+                    
+                    <div id="empty-state" class="hidden text-center py-8 bg-gray-50 rounded-2xl border border-gray-200">
+                        <i data-lucide="message-square" class="mx-auto text-gray-400 w-8 h-8 mb-3"></i>
+                        <p class="text-gray-500 font-medium">目前沒有留言，快來成為第一個發言的人吧！</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sidebar -->
+            <div class="lg:w-1/3 w-full mt-8 lg:mt-0 lg:sticky lg:top-8 h-full">
+                <div class="bg-white p-6 rounded-3xl soft-shadow border border-gray-100">
+                    <h2 class="text-xl font-extrabold text-gray-800 mb-4 pb-2 border-b border-gray-200 flex items-center">
+                        <i data-lucide="list" class="mr-2 text-green-500 w-5 h-5"></i>
+                        在線用戶 (<span id="sidebar-count">0</span>)
+                    </h2>
+                    <div id="online-users-list" class="space-y-2 max-h-96 overflow-y-auto pr-2">
+                        <!-- Online users injected here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer class="max-w-7xl mx-auto text-center text-xs text-gray-400 pt-8 mt-8">
+            &copy; 2024 即時公共留言板. Powered by Firebase.
+        </footer>
+    </div>
+
+    <!-- Modals -->
+    <!-- Delete Confirmation -->
+    <div id="modal-delete" class="hidden fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+        <div class="bg-white p-6 rounded-3xl soft-shadow w-full max-w-sm border border-gray-100">
+            <h4 class="text-xl font-bold text-gray-800 mb-4 pb-2 border-b border-gray-200 flex items-center">
+                <i data-lucide="alert-triangle" class="mr-2 text-red-500 w-5 h-5"></i> 確認刪除
+            </h4>
+            <p class="text-gray-700 mb-6 text-sm">
+                您確定要刪除 <span id="del-target-name" class="font-bold"></span> 的這則留言嗎？
+            </p>
+            <div class="flex justify-end space-x-3">
+                <button id="btn-cancel-del" class="px-4 py-2 bg-gray-200 text-gray-800 font-medium rounded-xl hover:bg-gray-300 text-sm">取消</button>
+                <button id="btn-confirm-del" class="px-4 py-2 bg-red-500 text-white font-bold rounded-xl shadow-md hover:bg-red-600 text-sm">確認刪除</button>
+            </div>
         </div>
     </div>
-);
 
-const AdminPanel = ({ config, userId, isAdmin, isSuperAdmin, blockedUsers, updateConfig, updateBlocked, manageAdminList, updateServerVersion, clearAll, adminMessage }) => {
-    const [localConfig, setLocalConfig] = useState({ ...config });
-    const [targetId, setTargetId] = useState('');
-    const [verInput, setVerInput] = useState(config.latestServerVersion);
-
-    useEffect(() => { setLocalConfig({ ...config }); setVerInput(config.latestServerVersion); }, [config]);
-
-    const handleUpdate = (key, val) => updateConfig(key, val);
-    
-    if (!isAdmin) return null;
-
-    return (
-        <div className="mb-6 classic-card p-5 border-l-4 border-yellow-500 bg-yellow-50">
-            <h3 className="text-lg font-extrabold text-yellow-800 mb-4 flex items-center"><Settings size={20} className="mr-2" /> 管理員控制台</h3>
-            {adminMessage.text && <div className={`p-3 mb-4 rounded-lg text-sm font-bold ${adminMessage.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{adminMessage.text}</div>}
-            
-            <div className="grid gap-4 md:grid-cols-2">
-                {/* Server & Maintenance */}
-                <div className="space-y-3 p-4 bg-white rounded-lg border border-gray-100 shadow-sm">
-                    <div className="flex justify-between items-center">
-                        <span className="text-sm font-bold text-gray-700 flex items-center"><Database size={16} className="mr-1"/> 維護模式</span>
-                        <button onClick={() => handleUpdate('isMaintenanceMode', !localConfig.isMaintenanceMode)} className={`px-4 py-1.5 rounded-full text-sm font-bold text-white transition-colors shadow ${localConfig.isMaintenanceMode ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'}`}>
-                            {localConfig.isMaintenanceMode ? '開啟中' : '關閉中'}
-                        </button>
-                    </div>
-                    <textarea className="classic-input w-full p-2 rounded-lg text-xs h-16 resize-none focus:ring-1 focus:ring-blue-500" value={localConfig.maintenanceMessage} onChange={e => setLocalConfig({...localConfig, maintenanceMessage: e.target.value})} placeholder="維護公告..." />
-                    <button onClick={() => handleUpdate('maintenanceMessage', localConfig.maintenanceMessage)} className="w-full py-2 bg-blue-500 text-white rounded-lg text-sm font-bold hover:bg-blue-600 transition-colors shadow-md">儲存公告</button>
-                </div>
-
-                {/* Marquee & Version */}
-                <div className="space-y-3 p-4 bg-white rounded-lg border border-gray-100 shadow-sm">
-                    <div>
-                        <label className="text-sm font-bold text-gray-700 block mb-1">跑馬燈</label>
-                        <div className="flex gap-2">
-                            <input className="classic-input flex-1 p-2 rounded-lg text-sm" value={localConfig.marqueeText} onChange={e => setLocalConfig({...localConfig, marqueeText: e.target.value})} />
-                            <button onClick={() => handleUpdate('marqueeText', localConfig.marqueeText)} className="px-3 bg-indigo-500 text-white rounded-lg text-sm font-bold hover:bg-indigo-600 transition-colors">更新</button>
-                        </div>
-                    </div>
-                    {isSuperAdmin(userId) && (
-                        <div>
-                            <label className="text-sm font-bold text-gray-700 block mb-1 flex items-center"><Code size={16} className="mr-1"/> 版本控制</label>
-                            <div className="flex gap-2">
-                                <input className="classic-input flex-1 p-2 rounded-lg text-sm font-mono" value={verInput} onChange={e => setVerInput(e.target.value)} />
-                                <button onClick={() => updateServerVersion(verInput)} className="px-3 bg-purple-600 text-white rounded-lg text-sm font-bold hover:bg-purple-700 transition-colors">發布</button>
-                            </div>
-                        </div>
-                    )}
-                </div>
+    <!-- Clear All Confirmation -->
+    <div id="modal-clear" class="hidden fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+        <div class="bg-white p-6 rounded-3xl soft-shadow w-full max-w-sm border border-red-300">
+            <h4 class="text-xl font-bold text-red-700 mb-4 pb-2 border-b border-red-300 flex items-center">
+                <i data-lucide="alert-triangle" class="mr-2 w-5 h-5"></i> 確認清除所有資料
+            </h4>
+            <p class="text-gray-700 mb-6 text-sm">您確定要**刪除所有留言**嗎？此操作不可逆。</p>
+            <div class="flex justify-end space-x-3">
+                <button id="btn-cancel-clear" class="px-4 py-2 bg-gray-200 text-gray-800 font-medium rounded-xl hover:bg-gray-300 text-sm">取消</button>
+                <button id="btn-do-clear" class="px-4 py-2 bg-red-600 text-white font-bold rounded-xl shadow-md hover:bg-red-700 text-sm">確認刪除</button>
             </div>
-
-            {/* User Management (Super Admin) */}
-             <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <div className="p-4 bg-white rounded-lg border border-gray-100 shadow-sm">
-                     <label className="text-sm font-bold text-gray-700 block mb-2">封鎖名單 ({blockedUsers.length})</label>
-                     <div className="max-h-24 overflow-y-auto space-y-1 bg-gray-50 p-2 rounded-md">
-                        {blockedUsers.length === 0 && <p className="text-xs text-gray-400 italic text-center py-2">無封鎖用戶</p>}
-                        {blockedUsers.map(id => (
-                            <div key={id} className="flex justify-between items-center bg-white p-1.5 rounded-lg border border-gray-100">
-                                <span className="text-[10px] font-mono text-gray-700 truncate w-24">{id}</span>
-                                <button onClick={() => updateBlocked(blockedUsers.filter(u => u !== id))} className="text-[10px] px-2 py-0.5 bg-red-100 text-red-600 rounded-full font-bold hover:bg-red-200">解除</button>
-                            </div>
-                        ))}
-                     </div>
-                </div>
-                
-                {isSuperAdmin(userId) && (
-                     <div className="p-4 bg-white rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between">
-                        <div>
-                            <label className="text-sm font-bold text-gray-700 block mb-2">指派管理員</label>
-                            <div className="flex gap-2 mb-2">
-                                <input className="classic-input flex-1 p-2 rounded-lg text-xs font-mono" value={targetId} onChange={e => setTargetId(e.target.value)} placeholder="User ID" />
-                                <button onClick={() => manageAdminList(targetId, 'add')} className="px-3 bg-indigo-500 text-white rounded-lg text-sm font-bold hover:bg-indigo-600 transition-colors">+</button>
-                                <button onClick={() => manageAdminList(targetId, 'remove')} className="px-3 bg-red-500 text-white rounded-lg text-sm font-bold hover:bg-red-600 transition-colors">-</button>
-                            </div>
-                        </div>
-                        <button onClick={() => setShowClearConfirm(true)} className="w-full py-2 mt-4 bg-red-500 text-white rounded-lg text-sm font-bold hover:bg-red-600 transition-colors shadow-lg shadow-red-200">
-                            <Trash2 size={16} className="inline mr-1"/> 清空所有留言
-                        </button>
-                     </div>
-                )}
-             </div>
         </div>
-    );
-};
+    </div>
 
-// --- Main Component ---
+    <!-- Logic Script -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, collection, query, onSnapshot, addDoc, serverTimestamp, doc, deleteDoc, getDocs, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-const App = () => {
-    // --- State ---
-    const [db, setDb] = useState(null);
-    const [userId, setUserId] = useState(null);
-    const [isAuthReady, setIsAuthReady] = useState(false);
-    const [isDbReady, setIsDbReady] = useState(false);
-    const [presenceCol, setPresenceCol] = useState(null); 
-    
-    const [messages, setMessages] = useState([]);
-    const [newMessage, setNewMessage] = useState('');
-    const [isLoading, setIsLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [cooldown, setCooldown] = useState(0); 
-    const [onlineUsersCount, setOnlineUsersCount] = useState(0); 
-    const [onlineUsers, setOnlineUsers] = useState([]); 
-    
-    const [config, setConfig] = useState({ 
-        marqueeText: '歡迎使用即時留言板！', 
-        isMaintenanceMode: false,
-        maintenanceMessage: '系統正在進行維護，請稍後再試。',
-        adminUserIds: [],
-        latestServerVersion: VERSION,
-    });
-    const [blockedUsers, setBlockedUsers] = useState([]); 
-    const [adminMessage, setAdminMessage] = useState({ type: '', text: '' });
-    
-    const [showClearConfirm, setShowClearConfirm] = useState(false); 
-    const [deleteTarget, setDeleteTarget] = useState(null); // { id, nickname }
-
-    const [nickname, setNickname] = useState('訪客'); 
-    const [isComposing, setIsComposing] = useState(false);
-
-    const isAdmin = useMemo(() => isAuthReady && (isSuperAdmin(userId) || config.adminUserIds.includes(userId)), [isAuthReady, userId, config.adminUserIds]);
-    const isOutdated = useMemo(() => VERSION !== config.latestServerVersion && config.latestServerVersion > VERSION, [config.latestServerVersion]);
-    const isCurrentUserBlocked = blockedUsers.includes(userId);
-    const canPost = isDbReady && userId && cooldown === 0 && !isCurrentUserBlocked && (!config.isMaintenanceMode || isAdmin) && !isOutdated; 
-
-    // --- Initialization ---
-    useEffect(() => {
-        if (!firebaseConfig) return;
-        try {
-            const app = initializeApp(firebaseConfig);
-            const firestore = getFirestore(app);
-            const firebaseAuth = getAuth(app);
-            setDb(firestore);
-            setPresenceCol(collection(firestore, PRESENCE_COL_PATH(appId)));
-
-            onAuthStateChanged(firebaseAuth, async (user) => {
-                if (user) setUserId(user.uid);
-                else {
-                    try {
-                        if (initialAuthToken) await signInWithCustomToken(firebaseAuth, initialAuthToken).then(u => setUserId(u.user.uid));
-                        else await signInAnonymously(firebaseAuth).then(u => setUserId(u.user.uid));
-                    } catch (e) { console.error(e); setError("身份驗證失敗"); }
-                }
-                setIsAuthReady(true);
-            });
-        } catch (e) { console.error(e); }
-    }, []);
-
-    // --- Hooks ---
-    useEffect(() => {
-        if (cooldown > 0) {
-            const timer = setInterval(() => setCooldown(p => (p > 0 ? p - 1 : 0)), 1000);
-            return () => clearInterval(timer);
-        }
-    }, [cooldown]);
-
-    useEffect(() => {
-        if (!db || !isAuthReady) return;
-        if (!isDbReady) setIsLoading(true);
+        // --- Config ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
-        const unsubMsg = onSnapshot(query(collection(db, MESSAGE_COL_PATH(appId))), (snapshot) => {
-            const list = [];
-            snapshot.forEach(d => list.push({ id: d.id, ...d.data(), timestamp: d.data().timestamp?.toDate ? d.data().timestamp.toDate() : new Date() }));
-            setMessages(list.sort((a, b) => b.timestamp - a.timestamp));
-            setIsLoading(false);
-            setIsDbReady(true);
-        });
+        const VERSION = "1.8.3";
+        const SUPER_ADMIN_ID = "15152491164772220861";
+        const ADMIN_NICKNAME = "管理員";
+        const MESSAGE_COL_PATH = `/artifacts/${appId}/public/data/messages`;
+        const CONFIG_DOC_PATH = `/artifacts/${appId}/public/data/config/general`;
+        const BLOCKED_USERS_DOC_PATH = `/artifacts/${appId}/public/data/config/blockedUsers`;
+        const PRESENCE_COL_PATH = `/artifacts/${appId}/public/data/presence`;
+        const USER_PROFILE_COL_PATH = `/artifacts/${appId}/public/data/user_profiles`;
 
-        const unsubConfig = onSnapshot(doc(db, CONFIG_DOC_PATH(appId)), (snap) => {
-            if (snap.exists()) setConfig(prev => ({ ...prev, ...snap.data() }));
-            else setDoc(doc(db, CONFIG_DOC_PATH(appId)), config, { merge: true }).catch(()=>{});
-        });
+        // --- State ---
+        const state = {
+            db: null,
+            auth: null,
+            userId: null,
+            nickname: '訪客',
+            isAdmin: false,
+            messages: [],
+            onlineUsers: [],
+            blockedUsers: [],
+            config: {
+                marqueeText: '歡迎使用即時留言板！',
+                isMaintenanceMode: false,
+                maintenanceMessage: '系統維護中...',
+                adminUserIds: [],
+                latestServerVersion: VERSION
+            },
+            cooldown: 0,
+            deleteTargetId: null,
+            isComposing: false,
+            userNicknames: {}
+        };
 
-        const unsubBlocked = onSnapshot(doc(db, BLOCKED_USERS_DOC_PATH(appId)), (snap) => {
-            if (snap.exists()) setBlockedUsers(snap.data().ids || []);
-        });
+        // --- DOM Elements ---
+        const els = {
+            messageInput: document.getElementById('message-input'),
+            btnSend: document.getElementById('btn-send'),
+            btnSendText: document.getElementById('btn-send-text'),
+            messageContainer: document.getElementById('message-container'),
+            onlineList: document.getElementById('online-users-list'),
+            onlineCount: document.getElementById('online-count'),
+            sidebarCount: document.getElementById('sidebar-count'),
+            marqueeText: document.getElementById('marquee-text'),
+            adminPanel: document.getElementById('admin-panel'),
+            serverStatusIcon: document.getElementById('server-status-icon'),
+            serverStatusText: document.getElementById('server-status-text'),
+            loadingSpinner: document.getElementById('loading-spinner'),
+            emptyState: document.getElementById('empty-state'),
+            userProfileSection: document.getElementById('user-profile-section'),
+            userIdDisplay: document.getElementById('user-id-display'),
+            currentNickname: document.getElementById('current-nickname'),
+            inputNickname: document.getElementById('input-nickname'),
+            nicknameView: document.getElementById('nickname-view'),
+            nicknameEdit: document.getElementById('nickname-edit'),
+            errorBox: document.getElementById('error-box'),
+            errorText: document.getElementById('error-text'),
+            adminBadge: document.getElementById('admin-badge'),
+            maintHint: document.getElementById('maint-hint'),
+            maintHintText: document.getElementById('maint-hint-text'),
+            blockedHint: document.getElementById('blocked-hint'),
+            versionWarning: document.getElementById('version-warning'),
+            serverVersionDisplay: document.getElementById('server-version-display'),
+            
+            // Admin Inputs
+            adminMarqueeInput: document.getElementById('admin-marquee-input'),
+            adminMaintMsg: document.getElementById('admin-maint-msg'),
+            adminVersionInput: document.getElementById('admin-version-input'),
+            blockedList: document.getElementById('blocked-list'),
+            superAdminSection: document.getElementById('super-admin-section'),
+            superAdminClear: document.getElementById('super-admin-clear')
+        };
 
-        return () => { unsubMsg(); unsubConfig(); unsubBlocked(); };
-    }, [db, isAuthReady]);
+        // --- Initialization ---
+        async function init() {
+            if (!firebaseConfig) {
+                showError("Firebase configuration missing.");
+                return;
+            }
 
-    useEffect(() => {
-        if (!db || !userId) return;
-        const presenceRef = doc(db, PRESENCE_COL_PATH(appId), userId);
-        const updatePresence = () => setDoc(presenceRef, { lastSeen: Date.now(), nickname: isAdmin ? ADMIN_NICKNAME : nickname, isAdmin }, { merge: true }).catch(()=>{});
-        updatePresence();
-        const interval = setInterval(updatePresence, PRESENCE_UPDATE_INTERVAL);
-        return () => clearInterval(interval);
-    }, [db, userId, isAdmin, nickname]);
+            const app = initializeApp(firebaseConfig);
+            state.db = getFirestore(app);
+            state.auth = getAuth(app);
 
-    useEffect(() => {
-        if (!presenceCol) return;
-        return onSnapshot(presenceCol, (snapshot) => {
-            const threshold = Date.now() - (ONLINE_THRESHOLD_SECONDS * 1000);
-            const active = [];
-            let count = 0;
-            snapshot.forEach(d => {
-                const data = d.data();
-                if (typeof data.lastSeen === 'number' && data.lastSeen >= threshold) {
-                    count++;
-                    active.push({ id: d.id, nickname: data.nickname || '載入中...', isAdmin: data.isAdmin || isSuperAdmin(d.id) || config.adminUserIds.includes(d.id) });
+            // Auth Listener
+            onAuthStateChanged(state.auth, async (user) => {
+                if (user) {
+                    state.userId = user.uid;
+                    updateServerStatus('已連線', 'text-green-500', 'database');
+                    els.userProfileSection.classList.remove('hidden');
+                    els.userIdDisplay.textContent = user.uid;
+                    setupListeners();
+                    startPresence();
+                } else {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(state.auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(state.auth);
+                    }
                 }
             });
-            setOnlineUsersCount(count);
-            setOnlineUsers(active.sort((a, b) => a.isAdmin === b.isAdmin ? a.nickname.localeCompare(b.nickname) : a.isAdmin ? -1 : 1));
-        });
-    }, [presenceCol, config.adminUserIds]);
 
-    useEffect(() => {
-        if (!db || !userId) return;
-        if (isAdmin) { setNickname(ADMIN_NICKNAME); return; }
-        return onSnapshot(doc(db, USER_PROFILE_COL_PATH(appId), userId), (snap) => {
-            setNickname(snap.exists() ? (snap.data().nickname || '訪客') : '訪客');
-        });
-    }, [db, userId, isAdmin]);
+            lucide.createIcons();
+        }
 
-    // --- Handlers ---
-    const addMessage = useCallback(debounce(async (text) => {
-        if (!db || !userId) return;
-        if (config.isMaintenanceMode && !isAdmin) return setError("維護中");
-        if (blockedUsers.includes(userId)) return setError("已封鎖");
-        if (isOutdated) return setError("請更新");
-
-        const trimmed = text.trim();
-        if (!trimmed) return;
-
-        setCooldown(COOLDOWN_DURATION);
-        try {
-            await addDoc(collection(db, MESSAGE_COL_PATH(appId)), {
-                userId, nickname: isAdmin ? ADMIN_NICKNAME : nickname, text: trimmed, timestamp: serverTimestamp()
+        function setupListeners() {
+            // 1. Messages Listener
+            const q = query(collection(state.db, MESSAGE_COL_PATH));
+            onSnapshot(q, (snapshot) => {
+                const msgs = [];
+                snapshot.forEach(doc => {
+                    msgs.push({ id: doc.id, ...doc.data() });
+                });
+                msgs.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                state.messages = msgs;
+                renderMessages();
+                updateServerStatus('已連線', 'text-green-500', 'database');
+            }, (err) => {
+                console.error(err);
+                showError("無法讀取留言");
             });
-            setNewMessage('');
-        } catch (e) { setError("發送失敗"); setCooldown(0); }
-    }, 500), [db, userId, blockedUsers, nickname, isAdmin, config.isMaintenanceMode, isOutdated]);
 
-    const handleKeyDown = (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            if (canPost && !isComposing) addMessage(newMessage);
+            // 2. Config Listener
+            onSnapshot(doc(state.db, CONFIG_DOC_PATH), (snap) => {
+                if (snap.exists()) {
+                    const data = snap.data();
+                    state.config = { ...state.config, ...data };
+                    updateConfigUI();
+                } else {
+                    // Create default if missing
+                    setDoc(doc(state.db, CONFIG_DOC_PATH), state.config, { merge: true });
+                }
+            });
+
+            // 3. Blocked Users Listener
+            onSnapshot(doc(state.db, BLOCKED_USERS_DOC_PATH), (snap) => {
+                if (snap.exists()) {
+                    state.blockedUsers = snap.data().ids || [];
+                } else {
+                    state.blockedUsers = [];
+                }
+                renderBlockedList(); // For admin
+                updateInputState(); // For user
+            });
+
+            // 4. Presence Listener
+            onSnapshot(collection(state.db, PRESENCE_COL_PATH), (snapshot) => {
+                const threshold = Date.now() - (30 * 1000);
+                const users = [];
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    if (data.lastSeen > threshold) {
+                        users.push({ 
+                            id: doc.id, 
+                            nickname: data.nickname, 
+                            isAdmin: data.isAdmin 
+                        });
+                    }
+                });
+                state.onlineUsers = users;
+                renderOnlineUsers();
+            });
+
+            // 5. User Profile Listener
+            onSnapshot(doc(state.db, USER_PROFILE_COL_PATH, state.userId), (snap) => {
+                if (snap.exists()) {
+                    const data = snap.data();
+                    if (!state.isAdmin) {
+                        state.nickname = data.nickname || '訪客';
+                        els.currentNickname.textContent = state.nickname;
+                        els.inputNickname.value = state.nickname;
+                        updateInputPlaceholder();
+                    }
+                }
+            });
         }
-    };
 
-    const handleDelete = async () => {
-        if (!deleteTarget) return;
-        try { await deleteDoc(doc(db, MESSAGE_COL_PATH(appId), deleteTarget.id)); setDeleteTarget(null); } catch (e) { setError("刪除失敗"); }
-    };
+        // --- Logic & Helpers ---
 
-    const handleNicknameUpdate = async (newNick) => {
-        if (isAdmin) return { success: false, error: "管理員無法更改暱稱" };
-        const trimmed = newNick.trim();
-        if (!trimmed || trimmed.length > MAX_NICKNAME_LENGTH) return { success: false, error: "長度不符" };
-        try {
-            await setDoc(doc(db, USER_PROFILE_COL_PATH(appId), userId), { nickname: trimmed }, { merge: true });
-            return { success: true };
-        } catch (e) { return { success: false, error: "更新失敗" }; }
-    };
-
-    // Admin Functions passed to panel
-    const adminActions = {
-        updateConfig: async (k, v) => isAdmin && setDoc(doc(db, CONFIG_DOC_PATH(appId)), { [k]: v }, { merge: true }),
-        updateBlocked: async (ids) => isAdmin && setDoc(doc(db, BLOCKED_USERS_DOC_PATH(appId)), { ids }),
-        clearAll: async () => { if (isSuperAdmin(userId)) { const s = await getDocs(collection(db, MESSAGE_COL_PATH(appId))); await Promise.all(s.docs.map(d => deleteDoc(d.ref))); setShowClearConfirm(false); } },
-        updateServerVersion: async (v) => isSuperAdmin(userId) && setDoc(doc(db, CONFIG_DOC_PATH(appId)), { latestServerVersion: v }, { merge: true }),
-        manageAdminList: async (tid, action) => {
-            if (!isSuperAdmin(userId) || !tid) return;
-            let newIds = [...config.adminUserIds];
-            if (action === 'add' && !newIds.includes(tid)) newIds.push(tid);
-            if (action === 'remove') newIds = newIds.filter(i => i !== tid);
-            await setDoc(doc(db, CONFIG_DOC_PATH(appId)), { adminUserIds: newIds }, { merge: true });
+        function isSuperAdmin(id) { return id === SUPER_ADMIN_ID; }
+        
+        function checkAdmin() {
+            const wasAdmin = state.isAdmin;
+            state.isAdmin = isSuperAdmin(state.userId) || state.config.adminUserIds.includes(state.userId);
+            
+            if (state.isAdmin !== wasAdmin) {
+                // Admin status changed
+                if (state.isAdmin) {
+                    els.adminPanel.classList.remove('hidden');
+                    els.adminBadge.classList.remove('hidden');
+                    state.nickname = ADMIN_NICKNAME;
+                    els.currentNickname.textContent = ADMIN_NICKNAME;
+                    
+                    if (isSuperAdmin(state.userId)) {
+                        els.superAdminSection.classList.remove('hidden');
+                        els.superAdminClear.classList.remove('hidden');
+                    }
+                } else {
+                    els.adminPanel.classList.add('hidden');
+                    els.adminBadge.classList.add('hidden');
+                    els.superAdminSection.classList.add('hidden');
+                }
+            }
         }
-    };
 
-    return (
-        <div className="min-h-screen p-4 sm:p-8 text-gray-800 font-sans">
-            <GlobalStyles />
-            <div className="max-w-7xl mx-auto">
-                {/* Outdated Alert */}
-                {isOutdated && (
-                    <div className="mb-4 bg-yellow-100 border-l-4 border-yellow-500 p-4 rounded-r-lg shadow-md flex justify-between items-center">
-                        <span className="font-bold text-yellow-800 flex items-center"><AlertTriangle className="mr-2"/> 版本過舊 ({VERSION} {'->'} {config.latestServerVersion})</span>
-                        <button onClick={() => window.location.reload()} className="bg-yellow-500 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-yellow-600 transition-colors shadow-lg">更新</button>
+        function updateConfigUI() {
+            // Check Admin
+            checkAdmin();
+
+            // Marquee
+            els.marqueeText.textContent = state.config.marqueeText;
+            if(state.isAdmin) els.adminMarqueeInput.value = state.config.marqueeText;
+            
+            // Maintenance
+            const isMaint = state.config.isMaintenanceMode;
+            document.getElementById('maintenance-badge').textContent = isMaint ? '啟動中' : '關閉';
+            document.getElementById('maintenance-badge').className = `ml-3 text-xs font-extrabold px-2 py-0.5 rounded-full text-white ${isMaint ? 'bg-red-500' : 'bg-green-500'}`;
+            
+            if(state.isAdmin) els.adminMaintMsg.value = state.config.maintenanceMessage;
+
+            // Version Check
+            const isOutdated = VERSION !== state.config.latestServerVersion && state.config.latestServerVersion > VERSION;
+            if (isOutdated) {
+                els.versionWarning.classList.remove('hidden');
+                els.serverVersionDisplay.textContent = state.config.latestServerVersion;
+            } else {
+                els.versionWarning.classList.add('hidden');
+            }
+            if(state.isAdmin) els.adminVersionInput.value = state.config.latestServerVersion;
+
+            updateInputState();
+        }
+
+        function updateInputState() {
+            const isBlocked = state.blockedUsers.includes(state.userId);
+            const isMaint = state.config.isMaintenanceMode;
+            const isOutdated = !els.versionWarning.classList.contains('hidden');
+            const canPost = !isBlocked && (!isMaint || state.isAdmin) && !isOutdated;
+
+            els.messageInput.disabled = !canPost || state.cooldown > 0;
+            els.btnSend.disabled = !canPost || state.cooldown > 0 || !els.messageInput.value.trim();
+            
+            // Hints
+            if (isMaint) {
+                els.maintHint.classList.remove('hidden');
+                els.maintHintText.textContent = state.config.maintenanceMessage;
+            } else {
+                els.maintHint.classList.add('hidden');
+            }
+
+            if (isBlocked) {
+                els.blockedHint.classList.remove('hidden');
+            } else {
+                els.blockedHint.classList.add('hidden');
+            }
+        }
+        
+        function updateInputPlaceholder() {
+             els.messageInput.placeholder = `以「${state.isAdmin ? ADMIN_NICKNAME : state.nickname}」的身份發言...`;
+        }
+
+        function startPresence() {
+            const ref = doc(state.db, PRESENCE_COL_PATH, state.userId);
+            const update = () => {
+                setDoc(ref, {
+                    lastSeen: Date.now(),
+                    nickname: state.isAdmin ? ADMIN_NICKNAME : state.nickname,
+                    isAdmin: state.isAdmin
+                }, { merge: true });
+            };
+            update();
+            setInterval(update, 10000);
+        }
+
+        // --- UI Rendering ---
+
+        function renderMessages() {
+            els.loadingSpinner.classList.add('hidden');
+            const count = state.messages.length;
+            document.getElementById('msg-count').textContent = count;
+            
+            if (count === 0) {
+                els.emptyState.classList.remove('hidden');
+                els.messageContainer.innerHTML = '';
+                return;
+            }
+            els.emptyState.classList.add('hidden');
+
+            // Diffing is hard in vanilla, simplified re-render (performance tradeoff acceptable for this size)
+            // Ideally we should do smart updates, but clearing innerHTML is safest for "HTML format" request without frameworks.
+            els.messageContainer.innerHTML = state.messages.map(msg => {
+                const isOwner = msg.userId === state.userId;
+                const isMsgAdmin = isSuperAdmin(msg.userId) || state.config.adminUserIds.includes(msg.userId);
+                const isMsgBlocked = state.blockedUsers.includes(msg.userId);
+                const date = msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString('zh-TW', {hour:'2-digit', minute:'2-digit'}) : '...';
+                
+                // Escape HTML
+                const safeText = msg.text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                const safeNick = (msg.nickname || '訪客').replace(/</g, "&lt;");
+
+                return `
+                <div class="fade-in flex items-start p-4 rounded-2xl soft-shadow mb-4 ${isOwner ? 'bg-white border-2 border-indigo-200' : 'bg-white border border-gray-100'}">
+                    <div class="flex-shrink-0 w-8 h-8 rounded-full ${isOwner ? 'bg-indigo-500' : 'bg-gray-400'} text-white flex items-center justify-center font-bold mt-1">
+                        <i data-lucide="user" class="w-4 h-4"></i>
                     </div>
-                )}
-
-                {/* Header Area */}
-                <header className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                    <div>
-                        <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight flex items-center">
-                            <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center text-white mr-3 shadow-xl shadow-blue-300">
-                                <MessageSquare size={24} fill="currentColor" />
+                    <div class="ml-3 flex-1 min-w-0">
+                        <div class="flex justify-between items-start">
+                            <div class="pr-2">
+                                <p class="text-sm font-bold ${isOwner ? 'text-indigo-700' : 'text-gray-700'}">
+                                    <span class="text-base font-extrabold mr-1 ${isMsgAdmin ? 'text-red-600' : ''}">
+                                        ${safeNick}
+                                        ${isMsgAdmin ? '<i data-lucide="crown" class="inline w-3 h-3 text-yellow-500 ml-1"></i>' : ''}
+                                    </span>
+                                    <span class="text-xs text-gray-400 block sm:inline break-all-id">(${msg.userId.substring(0,8)}...)</span>
+                                    ${isMsgBlocked ? '<span class="text-red-600 ml-1 font-bold text-xs">(已封鎖)</span>' : ''}
+                                </p>
                             </div>
-                            即時留言板
-                        </h1>
-                        <div className="flex gap-4 mt-2 text-sm font-medium text-gray-600 pl-1">
-                             <span className="flex items-center"><Users size={14} className="mr-1 text-green-500"/> {onlineUsersCount} 在線</span>
-                             <span className="flex items-center">
-                                 <div className={`w-2 h-2 rounded-full mr-1.5 ${config.isMaintenanceMode ? 'bg-red-500' : 'bg-green-500'}`}></div>
-                                 {config.isMaintenanceMode ? '維護中' : '服務正常'}
-                             </span>
-                             <span className="bg-gray-200 px-2 py-0.5 rounded-full text-gray-600 font-bold">v{VERSION}</span>
-                        </div>
-                    </div>
-                    <div className="w-full md:w-auto">
-                        <div className="classic-card px-4 py-3 flex items-center justify-between md:justify-start gap-4 bg-white border-l-4 border-yellow-400">
-                            <div className="flex items-center gap-2 text-md font-bold text-yellow-700">
-                                <Zap size={18} fill="currentColor" className="text-yellow-400" />
-                                公告
-                            </div>
-                            <div className="h-6 overflow-hidden relative flex-1 w-48">
-                                <div className="marquee-container whitespace-nowrap absolute text-sm font-medium text-gray-600">
-                                    {config.marqueeText}
-                                </div>
+                            <div class="flex space-x-1 flex-shrink-0">
+                                ${(state.isAdmin && !isOwner) ? `
+                                    <button onclick="window.toggleBlock('${msg.userId}')" class="px-2 py-0.5 text-xs rounded-md ${isMsgBlocked ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-600'}">
+                                        ${isMsgBlocked ? '解封' : '封鎖'}
+                                    </button>
+                                ` : ''}
+                                ${(isOwner || state.isAdmin) ? `
+                                    <button onclick="window.askDelete('${msg.id}', '${safeNick}')" class="text-red-400 hover:text-red-600 p-1">
+                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    </button>
+                                ` : ''}
                             </div>
                         </div>
-                    </div>
-                </header>
-
-                <div className="flex flex-col lg:flex-row gap-8">
-                    {/* LEFT COLUMN */}
-                    <div className="lg:w-2/3 space-y-6">
-                        <AdminPanel 
-                            config={config} userId={userId} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} blockedUsers={blockedUsers} 
-                            adminMessage={adminMessage} setAdminMessage={setAdminMessage} setShowClearConfirm={setShowClearConfirm}
-                            {...adminActions} 
-                        />
-
-                        {/* Input Box */}
-                        <div className="classic-card p-5 relative z-10">
-                             <textarea
-                                value={newMessage}
-                                onChange={e => !isComposing && setNewMessage(e.target.value)}
-                                onCompositionStart={() => setIsComposing(true)}
-                                onCompositionEnd={(e) => { setIsComposing(false); setNewMessage(e.target.value); }}
-                                onKeyDown={handleKeyDown}
-                                placeholder={config.isMaintenanceMode && !isAdmin ? "系統維護中，暫時無法留言..." : `以 ${isAdmin ? ADMIN_NICKNAME : nickname} 的身份留言...`}
-                                className="classic-input w-full p-4 rounded-xl outline-none resize-none text-gray-700 placeholder-gray-400 text-base min-h-[120px] focus:ring-1 focus:ring-blue-500"
-                                disabled={!canPost}
-                            />
-                            <div className="flex justify-between items-center mt-3">
-                                <div className="text-sm font-medium text-gray-500">
-                                    {isCurrentUserBlocked ? <span className="text-red-500 font-bold">您已被封鎖</span> : 
-                                     config.isMaintenanceMode && !isAdmin ? <span className="text-yellow-600 font-bold">維護模式</span> :
-                                     <span>Enter 送出 · {newMessage.length}/500</span>}
-                                </div>
-                                <button 
-                                    onClick={() => canPost && addMessage(newMessage)} 
-                                    disabled={!canPost}
-                                    className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl px-8 py-2.5 text-md font-bold shadow-lg shadow-blue-300 transition-all active:scale-95 disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed flex items-center"
-                                >
-                                    {cooldown > 0 ? `${cooldown}s` : <><Send size={18} className="mr-2" /> 發送</>}
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Messages */}
-                        <div className="space-y-4 pb-20">
-                            {error && <div className="bg-red-100 text-red-700 p-3 rounded-xl text-sm font-medium text-center border border-red-300">{error}</div>}
-                            
-                            {isLoading ? (
-                                <div className="flex justify-center py-12"><Loader className="animate-spin text-gray-400" size={32} /></div>
-                            ) : messages.length === 0 ? (
-                                <div className="text-center py-12 text-gray-400 text-lg bg-white rounded-xl border border-dashed border-gray-300 shadow-inner">
-                                    <MessageSquare size={40} className="mx-auto mb-3 opacity-30" />
-                                    還沒有人留言，快來搶頭香！
-                                </div>
-                            ) : (
-                                messages.map(msg => (
-                                    <MessageItem 
-                                        key={msg.id} 
-                                        message={msg} 
-                                        currentUserId={userId} 
-                                        currentUserIsAdmin={isAdmin} 
-                                        config={config} 
-                                        blockedUsers={blockedUsers} 
-                                        onToggleBlock={adminActions.updateBlocked ? id => adminActions.updateBlocked(blockedUsers.includes(id) ? blockedUsers.filter(u=>u!==id) : [...blockedUsers, id]) : null}
-                                        onDelete={(id, nick) => setDeleteTarget({id, nickname: nick})}
-                                    />
-                                ))
-                            )}
-                        </div>
-                    </div>
-
-                    {/* RIGHT COLUMN */}
-                    <div className="lg:w-1/3 space-y-6">
-                        <UserProfileSection userId={userId} isAdmin={isAdmin} nickname={nickname} onUpdateNickname={handleNicknameUpdate} />
-                        <OnlineUsersList onlineUsers={onlineUsers} currentUserId={userId} />
+                        <p class="text-gray-900 mt-1 whitespace-pre-wrap break-words leading-relaxed">${safeText}</p>
+                        <p class="text-xs text-gray-400 mt-2">${date}</p>
                     </div>
                 </div>
-            </div>
+                `;
+            }).join('');
+            
+            lucide.createIcons();
+        }
 
-            {/* Modals */}
-            {deleteTarget && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-                    <div className="bg-white w-full max-w-sm p-8 rounded-xl shadow-2xl transform scale-100 transition-all border-t-4 border-red-500">
-                        <h3 className="text-xl font-extrabold text-gray-900 mb-2">確認刪除？</h3>
-                        <p className="text-sm text-gray-600 mb-6">您確定要刪除 <b>{deleteTarget.nickname}</b> 的這則留言嗎？此操作無法復原。</p>
-                        <div className="flex justify-end gap-3">
-                            <button onClick={() => setDeleteTarget(null)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-bold hover:bg-gray-300 transition-colors">取消</button>
-                            <button onClick={handleDelete} className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 shadow-lg shadow-red-300 transition-colors">確認刪除</button>
-                        </div>
+        function renderOnlineUsers() {
+            // Sort
+            state.onlineUsers.sort((a, b) => {
+                if (a.id === state.userId) return -1;
+                if (b.id === state.userId) return 1;
+                if (a.isAdmin && !b.isAdmin) return -1;
+                if (!a.isAdmin && b.isAdmin) return 1;
+                return a.nickname.localeCompare(b.nickname);
+            });
+
+            els.onlineCount.textContent = state.onlineUsers.length;
+            els.sidebarCount.textContent = state.onlineUsers.length;
+            
+            els.onlineList.innerHTML = state.onlineUsers.map(u => `
+                <div class="p-3 rounded-xl flex items-center justify-between text-sm soft-shadow-sm transition-colors duration-150 ${u.id === state.userId ? 'bg-indigo-50 border border-indigo-200' : 'bg-gray-50'}">
+                    <div class="flex items-center space-x-2 truncate min-w-0">
+                        <i data-lucide="globe" class="w-4 h-4 ${u.id === state.userId ? 'text-indigo-600' : 'text-green-500'}"></i>
+                        <span class="font-extrabold ${u.isAdmin ? 'text-red-600' : 'text-gray-800'} truncate">
+                            ${u.nickname}
+                        </span>
+                        ${u.isAdmin ? '<i data-lucide="crown" class="w-3 h-3 text-yellow-500"></i>' : ''}
                     </div>
+                    <span class="text-xs font-mono ml-2 text-gray-400 break-all-id">${u.id.substring(0,8)}...</span>
                 </div>
-            )}
-
-            {showClearConfirm && (
-                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-                    <div className="bg-white w-full max-w-sm p-8 rounded-xl shadow-2xl border-t-4 border-red-700">
-                        <h3 className="text-xl font-extrabold text-red-700 mb-2 flex items-center"><AlertTriangle className="mr-2"/> 危險操作！</h3>
-                        <p className="text-sm text-gray-600 mb-6">將永久刪除<b>所有留言</b>，此操作無法復原。請再次確認。</p>
-                        <div className="flex justify-end gap-3">
-                            <button onClick={() => setShowClearConfirm(false)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm font-bold hover:bg-gray-300">取消</button>
-                            <button onClick={() => adminActions.clearAll()} className="px-4 py-2 bg-red-700 text-white rounded-lg text-sm font-bold hover:bg-red-800 shadow-lg">確認清空</button>
-                        </div>
+            `).join('');
+            lucide.createIcons();
+        }
+        
+        function renderBlockedList() {
+            els.blockedList.innerHTML = state.blockedUsers.length === 0 
+                ? '<p class="text-gray-500 text-xs">無</p>' 
+                : state.blockedUsers.map(uid => `
+                    <div class="flex justify-between items-center p-2 bg-white rounded-lg border border-gray-100 text-xs">
+                        <span class="font-mono text-gray-600 break-all-id mr-2">${uid}</span>
+                        <button onclick="window.toggleBlock('${uid}')" class="text-green-600 font-bold">解除</button>
                     </div>
-                </div>
-            )}
-        </div>
-    );
-};
+                `).join('');
+        }
 
-export default App;
+        function updateServerStatus(text, colorClass, iconName) {
+            els.serverStatusText.textContent = text;
+            els.serverStatusText.className = colorClass;
+            // Update icon needs DOM manipulation
+            // Simplified: just text update for status usually enough
+        }
+
+        function showError(msg) {
+            els.errorBox.classList.remove('hidden');
+            els.errorText.textContent = msg;
+            setTimeout(() => els.errorBox.classList.add('hidden'), 5000);
+        }
+
+        // --- Actions ---
+
+        window.toggleBlock = async (uid) => {
+            if(!state.isAdmin) return;
+            let newList;
+            if (state.blockedUsers.includes(uid)) {
+                newList = state.blockedUsers.filter(id => id !== uid);
+            } else {
+                newList = [...state.blockedUsers, uid];
+            }
+            await setDoc(doc(state.db, BLOCKED_USERS_DOC_PATH), { ids: newList }, { merge: true });
+        };
+
+        window.askDelete = (id, nick) => {
+            state.deleteTargetId = id;
+            document.getElementById('del-target-name').textContent = nick;
+            document.getElementById('modal-delete').classList.remove('hidden');
+        };
+
+        async function doDelete() {
+            if (!state.deleteTargetId) return;
+            try {
+                await deleteDoc(doc(state.db, MESSAGE_COL_PATH, state.deleteTargetId));
+                document.getElementById('modal-delete').classList.add('hidden');
+            } catch(e) { console.error(e); showError("刪除失敗"); }
+        }
+
+        // --- Event Listeners ---
+        
+        // Send Message
+        els.btnSend.onclick = async () => {
+            const text = els.messageInput.value.trim();
+            if (!text || state.cooldown > 0) return;
+            
+            // Cooldown logic
+            state.cooldown = 5;
+            els.btnSend.disabled = true;
+            const timer = setInterval(() => {
+                state.cooldown--;
+                els.btnSendText.textContent = `請稍候 (${state.cooldown}s)`;
+                if (state.cooldown <= 0) {
+                    clearInterval(timer);
+                    els.btnSendText.innerHTML = '<i data-lucide="send" class="mr-2 w-4 h-4"></i> 發送留言';
+                    updateInputState();
+                    lucide.createIcons();
+                }
+            }, 1000);
+
+            try {
+                await addDoc(collection(state.db, MESSAGE_COL_PATH), {
+                    userId: state.userId,
+                    nickname: state.isAdmin ? ADMIN_NICKNAME : state.nickname,
+                    text: text,
+                    timestamp: serverTimestamp()
+                });
+                els.messageInput.value = '';
+                document.getElementById('char-count').textContent = '0';
+            } catch(e) {
+                console.error(e);
+                showError("發送失敗");
+            }
+        };
+
+        // Textarea events
+        els.messageInput.addEventListener('input', (e) => {
+            document.getElementById('char-count').textContent = e.target.value.length;
+            els.btnSend.disabled = !e.target.value.trim() || state.cooldown > 0;
+        });
+        els.messageInput.addEventListener('compositionstart', () => state.isComposing = true);
+        els.messageInput.addEventListener('compositionend', () => state.isComposing = false);
+        els.messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!state.isComposing) els.btnSend.click();
+            }
+        });
+
+        // Nickname Edit
+        document.getElementById('btn-edit-nickname').onclick = () => {
+            els.nicknameView.classList.add('hidden');
+            els.nicknameEdit.classList.remove('hidden');
+            els.inputNickname.focus();
+        };
+        document.getElementById('btn-cancel-nickname').onclick = () => {
+            els.nicknameView.classList.remove('hidden');
+            els.nicknameEdit.classList.add('hidden');
+        };
+        document.getElementById('btn-save-nickname').onclick = async () => {
+            const val = els.inputNickname.value.trim();
+            if (val && val.length <= 12) {
+                await setDoc(doc(state.db, USER_PROFILE_COL_PATH, state.userId), { nickname: val }, { merge: true });
+                state.nickname = val;
+                els.currentNickname.textContent = val;
+                els.nicknameView.classList.remove('hidden');
+                els.nicknameEdit.classList.add('hidden');
+                updateInputPlaceholder();
+            }
+        };
+
+        // Modal Actions
+        document.getElementById('btn-cancel-del').onclick = () => document.getElementById('modal-delete').classList.add('hidden');
+        document.getElementById('btn-confirm-del').onclick = doDelete;
+        
+        // Admin Actions
+        document.getElementById('btn-update-marquee').onclick = async () => {
+            const val = els.adminMarqueeInput.value.trim();
+            if (val) await setDoc(doc(state.db, CONFIG_DOC_PATH), { marqueeText: val }, { merge: true });
+        };
+        document.getElementById('btn-maint-on').onclick = async () => {
+            const msg = els.adminMaintMsg.value || '系統維護中...';
+            await setDoc(doc(state.db, CONFIG_DOC_PATH), { isMaintenanceMode: true, maintenanceMessage: msg }, { merge: true });
+        };
+        document.getElementById('btn-maint-off').onclick = async () => {
+            await setDoc(doc(state.db, CONFIG_DOC_PATH), { isMaintenanceMode: false }, { merge: true });
+        };
+        document.getElementById('btn-update-version').onclick = async () => {
+            const val = els.adminVersionInput.value.trim();
+            if(val) await setDoc(doc(state.db, CONFIG_DOC_PATH), { latestServerVersion: val }, { merge: true });
+        };
+        
+        // Clear All
+        document.getElementById('btn-confirm-clear-open').onclick = () => document.getElementById('modal-clear').classList.remove('hidden');
+        document.getElementById('btn-cancel-clear').onclick = () => document.getElementById('modal-clear').classList.add('hidden');
+        document.getElementById('btn-do-clear').onclick = async () => {
+            document.getElementById('modal-clear').classList.add('hidden');
+            const snap = await getDocs(collection(state.db, MESSAGE_COL_PATH));
+            snap.forEach(d => deleteDoc(d.ref));
+        };
+
+        // Start App
+        init();
+
+    </script>
+</body>
+</html>
