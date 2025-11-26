@@ -3,26 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>即時公共留言板</title>
+    <title>即時公共留言板 (Vercel 部署)</title>
     <!-- 載入 Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 修正: 載入 Lucide Icons UMD Bundle，它會將 'lucide' 物件註冊為全域變數 -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        /* 設定字體 */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f7f7f9;
-        }
-        /* 隱藏原生捲軸但允許內容滾動 */
-        .hide-scrollbar {
-            -ms-overflow-style: none;  /* IE and Edge */
-            scrollbar-width: none;  /* Firefox */
-        }
-        .hide-scrollbar::-webkit-scrollbar {
-            display: none; /* Chrome, Safari and Opera */
-        }
+        body { font-family: 'Inter', sans-serif; background-color: #f7f7f9; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
     </style>
 </head>
 <body class="p-4 sm:p-6 md:p-10">
@@ -31,7 +20,7 @@
         <!-- 應用程式主內容將在此呈現 -->
     </div>
 
-    <!-- 刪除確認 Modal 結構 -->
+    <!-- 刪除確認 Modal 結構 (保持不變) -->
     <div id="delete-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center p-4 z-50 hidden" data-id="">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 transform transition-all scale-100">
             <div class="text-center">
@@ -53,22 +42,33 @@
 
     <!-- Firebase 模組與應用程式腳本 -->
     <script type="module">
-        // 修正: 將 setLogLevel 從 firebase-app-check.js 移至 firebase-app.js
         import { initializeApp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, addDoc, serverTimestamp, deleteDoc, onSnapshot, collection, query, orderBy, setDoc, updateDoc, where, writeBatch, arrayUnion, arrayRemove, getDocs, limit, FieldValue } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        // 舊有的 setLogLevel 匯入已被移除
+        import { getFirestore, doc, addDoc, serverTimestamp, deleteDoc, onSnapshot, collection, query, where, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-
-        // --- 全域變數 (來自 Canvas 環境) ---
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // --- 部署環境的 Firebase 配置 (請替換為您的真實值) ---
+        // !!! 您必須將以下 DUMMY_FIREBASE_CONFIG 替換為您在 Firebase Console 中取得的配置物件 !!!
+        const FIREBASE_CONFIG = {
+            apiKey: "AIzaSyBpNoW-hfep20-7W-LFRKVpnxUe49qApyo", 
+            authDomain: "twmsg-1a772.firebaseapp.com",
+            projectId: "twmsg-1a772",
+            storageBucket: "twmsg-1a772.firebasestorage.app",
+            messagingSenderId: "750082816086",
+            appId: "1:750082816086:web:360db15d50b81e2b6123f7",
+            measurementId: "G-Y5TM8Y784E"
+        };
+        
+        // 為了確保應用程式能正確執行，我們將配置從 Canvas 環境變數替換為硬編碼/佔位符
+        // 在 Vercel 部署中，通常沒有初始自訂 Token，所以將其設為 null
+        const appId = FIREBASE_CONFIG.projectId || 'default-vercel-app-id'; // 使用 Project ID 作為 App ID 基礎
+        const firebaseConfig = FIREBASE_CONFIG;
+        const initialAuthToken = null; 
 
         // --- 應用程式常數 ---
         const VERSION = "1.7.3";
         const COOLDOWN_DURATION = 5; // 5 秒發言限制
-        const SUPER_ADMIN_ID = "15152491164772220861"; // 預設 Super Admin ID，請替換成您的 ID
+        // 請將 SUPER_ADMIN_ID 替換為您自己的用戶 ID (從控制台獲取)，以便啟用管理員權限
+        const SUPER_ADMIN_ID = "15152491164772220861"; 
 
         // 在線用戶狀態追蹤
         const ONLINE_THRESHOLD_SECONDS = 30; // 30 秒內有活動視為在線
@@ -81,9 +81,9 @@
         let auth;
         let currentUserId = null;
         let isAuthReady = false;
-        let lastMessageTime = 0; // 用於發言冷卻
-        let isSubmitting = false; // 防止重複提交
-        let presenceInterval = null; // 用於在線狀態更新的 Interval ID
+        let lastMessageTime = 0; 
+        let isSubmitting = false; 
+        let presenceInterval = null; 
 
         // --- UI 輔助函式 ---
 
@@ -168,7 +168,9 @@
         /** 計算時間差 */
         function timeSince(date) {
             if (!date) return '未知時間';
-            // Firestore Timestamp 物件
+            // 由於部署環境可能接收的不是 Firestore Timestamp，這裡只處理 Timestamp 物件
+            if (!date.seconds) return '發送中...'; 
+            
             const seconds = date.seconds;
             const milliseconds = date.nanoseconds / 1000000;
             const past = new Date(seconds * 1000 + milliseconds);
@@ -192,8 +194,8 @@
 
         /** 初始化 Firebase 服務並處理認證 */
         async function initFirebase() {
-            if (!firebaseConfig) {
-                renderApp(false, '錯誤：未提供 Firebase 配置。請檢查環境變數。');
+            if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes('YOUR_')) {
+                renderApp(false, '錯誤：未提供 Firebase 配置。請將 deployment.html 中的佔位符替換為您的真實配置。');
                 return;
             }
 
@@ -218,12 +220,8 @@
                         startPresenceTracking();
                         
                     } else {
-                        // 嘗試使用提供的 custom token 登入，或匿名登入
-                        if (initialAuthToken) {
-                            await signInWithCustomToken(auth, initialAuthToken);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
+                        // 在 Vercel 部署中，我們直接使用匿名登入作為公共留言板的基礎認證
+                        await signInAnonymously(auth);
                     }
                 });
             } catch (error) {
@@ -235,7 +233,6 @@
         /** 設置即時訊息監聽器 */
         function setupMessageListener() {
             if (!db) return;
-            // 由於 Canvas 環境中不支援 Firebase 索引創建，我們移除 orderBy 並在 JS 中進行排序
             const q = query(collection(db, MESSAGES_COLLECTION_PATH));
 
             onSnapshot(q, (snapshot) => {
@@ -271,8 +268,7 @@
             // 找出在線時間在 N 秒內的用戶
             const cutoff = Date.now() - (ONLINE_THRESHOLD_SECONDS * 1000);
             
-            // 警告: 使用 where 條件查詢可能會需要索引。如果報錯，可能需要移除 where 條件並在客戶端過濾。
-            // 為了保持功能，我們暫時保留 where 條件。
+            // 使用 where 條件查詢，篩選出最近活躍的用戶
             const q = query(collection(db, PRESENCE_COLLECTION_PATH), where('lastActive', '>', cutoff));
 
             onSnapshot(q, (snapshot) => {
@@ -304,19 +300,13 @@
 
         /** 開始在線狀態追蹤 */
         function startPresenceTracking() {
-            // 先執行一次
             updatePresence(); 
-            // 如果已經有 interval，先清除
             if (presenceInterval) clearInterval(presenceInterval);
-            // 每 15 秒更新一次
             presenceInterval = setInterval(updatePresence, (ONLINE_THRESHOLD_SECONDS / 2) * 1000); 
 
-            // 設置離開頁面時的狀態清理（儘量）
             window.addEventListener('beforeunload', async () => {
                 if (db && currentUserId) {
                     try {
-                        const userDocRef = doc(db, PRESENCE_COLLECTION_PATH, currentUserId);
-                        // 停止 interval
                         clearInterval(presenceInterval);
                     } catch (e) {
                         console.warn("清理在線狀態失敗:", e);
@@ -360,13 +350,12 @@
                     userId: currentUserId,
                     content: content,
                     timestamp: serverTimestamp(),
-                    // 隨機生成一個暱稱顏色 (這裡使用硬編碼，實際可以更複雜)
                     colorHash: `bg-indigo-100 text-indigo-700`,
                 });
 
-                input.value = ''; // 清空輸入框
-                lastMessageTime = now; // 更新最後發言時間
-                updatePresence(); // 發言後也更新在線狀態
+                input.value = ''; 
+                lastMessageTime = now; 
+                updatePresence(); 
             } catch (error) {
                 console.error("發送訊息失敗:", error);
                 showMessage('發送失敗', `無法發送訊息：${error.message}`, 'text-red-500', 'alert-triangle');
@@ -380,7 +369,7 @@
 
         /** 處理訊息刪除 */
         async function deleteMessage(messageId) {
-            hideModal(); // 先關閉 Modal
+            hideModal(); 
             if (!db || !messageId) {
                 showMessage('錯誤', '無效的訊息 ID。', 'text-red-500', 'alert-triangle');
                 return;
@@ -396,8 +385,8 @@
             }
         }
 
-        // --- 渲染函式 ---
-
+        // --- 渲染函式 (與原始碼相同，確保一致性) ---
+        
         /** 建立單個訊息元素 */
         function createMessageElement(msg) {
             const isUserAdmin = currentUserId === SUPER_ADMIN_ID;
@@ -410,7 +399,7 @@
             // 1. User Icon/Avatar
             const userIcon = `<div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-semibold 
                                 ${isUserAdmin ? 'bg-red-500' : isMessageOwner ? 'bg-indigo-500' : 'bg-gray-500'}">
-                                ${isUserAdmin ? '冠' : isMessageOwner ? '我' : msg.userId.substring(0, 1)}
+                                ${isUserAdmin ? '冠' : isMessageOwner ? '我' : (msg.userId ? msg.userId.substring(0, 1) : '?')}
                             </div>`;
 
             // 2. Content and Info
@@ -418,7 +407,7 @@
             const contentHTML = `<div class="flex-1 min-w-0">
                                 <div class="flex items-center space-x-2">
                                     <span class="font-bold text-sm ${isUserAdmin ? 'text-red-600' : 'text-gray-800'}">
-                                        用戶 ID: ${msg.userId} ${isUserAdmin ? '<svg class="w-4 h-4 inline ml-1 text-red-500" data-lucide="crown"></svg>' : isMessageOwner ? '<svg class="w-4 h-4 inline ml-1 text-indigo-500" data-lucide="code"></svg>' : ''}
+                                        用戶 ID: ${msg.userId || '未知用戶'} ${isUserAdmin ? '<svg class="w-4 h-4 inline ml-1 text-red-500" data-lucide="crown"></svg>' : isMessageOwner ? '<svg class="w-4 h-4 inline ml-1 text-indigo-500" data-lucide="code"></svg>' : ''}
                                     </span>
                                     <span class="text-xs text-gray-400">·</span>
                                     <span class="text-xs text-gray-500">${timestampText}</span>
@@ -442,9 +431,7 @@
                 deleteBtn.addEventListener('click', () => showDeleteConfirmation(msg.id));
             }
             
-            // 重新渲染 Lucide icon
             refreshLucideIcons();
-
             return div;
         }
 
@@ -453,7 +440,6 @@
             const container = document.getElementById('messages-container');
             if (!container) return;
 
-            // 顯示載入狀態
             if (!messages) {
                 container.innerHTML = `<div class="text-center py-8 bg-gray-50 rounded-2xl border border-gray-200" id="loading-spinner">
                     <svg class="animate-spin h-8 w-8 mx-auto text-indigo-500 mb-3" viewBox="0 0 24 24" data-lucide="loader"></svg>
@@ -472,8 +458,7 @@
                 return;
             }
 
-            // 渲染訊息列表
-            container.innerHTML = ''; // 清空舊內容
+            container.innerHTML = ''; 
             messages.forEach(msg => {
                 container.appendChild(createMessageElement(msg));
             });
@@ -504,7 +489,6 @@
                     </p>
                 </div>
             `;
-            // 重新渲染 Lucide icon
             refreshLucideIcons();
             
             return li;
@@ -516,7 +500,6 @@
             const countEl = document.getElementById('online-user-count');
             if (!container || !countEl) return;
 
-            // 確保「自己」永遠在名單內 (如果自己還沒被 Firestore listener 抓到)
             const selfInList = users.some(u => u.userId === currentUserId);
             let finalUsers = [...users];
 
@@ -540,7 +523,7 @@
 
 
             countEl.textContent = finalUsers.length;
-            container.innerHTML = ''; // 清空舊內容
+            container.innerHTML = ''; 
             finalUsers.forEach(user => {
                 container.appendChild(createOnlineUserElement(user));
             });
@@ -573,7 +556,7 @@
                         <svg class="w-8 h-8 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" data-lucide="globe"></svg>
                         <h1 class="text-3xl font-extrabold text-gray-900">即時公共留言板</h1>
                     </div>
-                    <p class="text-sm text-gray-500 mt-2">使用 Firebase Firestore 實現的即時聊天。您的 ID: <span class="font-mono text-indigo-600">${currentUserId}</span></p>
+                    <p class="text-sm text-gray-500 mt-2">使用 Firebase Firestore 實現的即時聊天。您的 ID: <span class="font-mono text-indigo-600">${currentUserId || '連線中...'}</span></p>
                 </header>
 
                 <div class="mt-8 flex flex-col lg:flex-row gap-8">
@@ -614,19 +597,16 @@
                 </footer>
             `;
             
-            // 重新渲染 Lucide icon
             refreshLucideIcons();
             
-            // 註冊表單提交事件
             const messageForm = document.getElementById('message-form');
             if (messageForm) {
                 messageForm.addEventListener('submit', handleMessageSubmit);
             }
             
-            // 初始載入訊息和在線用戶 (如果 auth 準備好了)
             if (isAuthReady) {
-                renderMessages(null); // 顯示載入中
-                renderOnlineUsers([]); // 顯示載入中
+                renderMessages(null); 
+                renderOnlineUsers([]); 
             }
         }
 
