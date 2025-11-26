@@ -6,11 +6,8 @@
     <title>即時公共留言板</title>
     <!-- 載入 Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 載入 Lucide Icons 模組 (用來顯示圖標) -->
-    <script type="module">
-        import { createIcons, icons } from 'https://unpkg.com/lucide@latest';
-        window.lucide = { createIcons, icons };
-    </script>
+    <!-- 修正: 載入 Lucide Icons UMD Bundle，它會將 'lucide' 物件註冊為全域變數 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         /* 設定字體 */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
@@ -38,7 +35,8 @@
     <div id="delete-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center p-4 z-50 hidden" data-id="">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 transform transition-all scale-100">
             <div class="text-center">
-                <svg id="modal-icon" class="w-12 h-12 text-red-500 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                <!-- Lucide icon placeholder -->
+                <svg id="modal-icon" class="w-12 h-12 text-red-500 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" data-lucide="alert-triangle"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                 <h3 class="text-lg font-semibold text-gray-900 mt-3">確認刪除留言</h3>
                 <p class="text-sm text-gray-500 mt-2">您確定要刪除這則訊息嗎？此操作無法復原。</p>
             </div>
@@ -55,10 +53,12 @@
 
     <!-- Firebase 模組與應用程式腳本 -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        // 修正: 將 setLogLevel 從 firebase-app-check.js 移至 firebase-app.js
+        import { initializeApp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, addDoc, serverTimestamp, deleteDoc, onSnapshot, collection, query, orderBy, setDoc, updateDoc, where, writeBatch, arrayUnion, arrayRemove, getDocs, limit, FieldValue } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { getLogLevel, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app-check.js"; // 為了使用 setLogLevel
+        // 舊有的 setLogLevel 匯入已被移除
+        
 
         // --- 全域變數 (來自 Canvas 環境) ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -88,6 +88,16 @@
         // --- UI 輔助函式 ---
 
         /**
+         * 重新渲染 Lucide icon (使用全域 lucide 物件)
+         */
+        function refreshLucideIcons() {
+            if (typeof lucide !== 'undefined' && lucide.createIcons) {
+                // Lucide 在 UMD 模式下，物件名為 lucide
+                lucide.createIcons({ attrs: { 'stroke-width': 2 } });
+            }
+        }
+
+        /**
          * 顯示自訂訊息 Modal。
          * @param {string} title - 標題
          * @param {string} message - 內容
@@ -106,15 +116,12 @@
             titleEl.textContent = title;
             messageEl.textContent = message;
 
-            // 移除舊的 Lucide icon
-            iconSvg.innerHTML = '';
+            // 設定 Lucide icon
             iconSvg.classList.value = `w-12 h-12 mx-auto ${iconClass}`;
             iconSvg.dataset.lucide = iconName;
             
             // 重新渲染 Lucide icon
-            if (window.lucide && window.lucide.createIcons) {
-                window.lucide.createIcons({ icons: window.lucide.icons, attrs: { 'stroke-width': 2 } });
-            }
+            refreshLucideIcons();
 
             confirmBtn.textContent = '確定';
             confirmBtn.onclick = hideModal;
@@ -137,12 +144,9 @@
             messageEl.textContent = '您確定要刪除這則訊息嗎？此操作無法復原。';
 
             // 設定 Lucide icon 為 Trash2
-            iconSvg.innerHTML = '';
             iconSvg.classList.value = `w-12 h-12 mx-auto text-red-500`;
             iconSvg.dataset.lucide = 'trash-2';
-            if (window.lucide && window.lucide.createIcons) {
-                window.lucide.createIcons({ icons: window.lucide.icons, attrs: { 'stroke-width': 2 } });
-            }
+            refreshLucideIcons();
 
             confirmBtn.textContent = '確認刪除';
             confirmBtn.onclick = () => deleteMessage(messageId);
@@ -231,23 +235,32 @@
         /** 設置即時訊息監聽器 */
         function setupMessageListener() {
             if (!db) return;
-            const q = query(collection(db, MESSAGES_COLLECTION_PATH), orderBy('timestamp', 'desc'));
+            // 由於 Canvas 環境中不支援 Firebase 索引創建，我們移除 orderBy 並在 JS 中進行排序
+            const q = query(collection(db, MESSAGES_COLLECTION_PATH));
 
             onSnapshot(q, (snapshot) => {
-                const messages = snapshot.docs.map(doc => ({
+                let messages = snapshot.docs.map(doc => ({
                     id: doc.id,
                     ...doc.data()
                 }));
+                
+                // 執行客戶端排序 (依時間戳降序)
+                messages.sort((a, b) => {
+                    const timeA = a.timestamp ? a.timestamp.toMillis() : 0;
+                    const timeB = b.timestamp ? b.timestamp.toMillis() : 0;
+                    return timeB - timeA;
+                });
+
                 renderMessages(messages);
             }, (error) => {
                 console.error("訊息監聽失敗:", error);
                 const messageContainer = document.getElementById('messages-container');
                 if (messageContainer) {
                     messageContainer.innerHTML = `<div class="text-center py-8 bg-red-50 rounded-2xl border border-red-200">
-                        <svg class="w-8 h-8 mx-auto text-red-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" data-lucide="alert-triangle"></svg>
+                        <svg class="w-8 h-8 mx-auto text-red-500 mb-3" viewBox="0 0 24 24" data-lucide="alert-triangle"></svg>
                         <p class="text-red-700 font-medium">載入訊息時發生錯誤：${error.message}</p>
                     </div>`;
-                    if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+                    refreshLucideIcons();
                 }
             });
         }
@@ -257,7 +270,10 @@
             if (!db) return;
             // 找出在線時間在 N 秒內的用戶
             const cutoff = Date.now() - (ONLINE_THRESHOLD_SECONDS * 1000);
-            const q = query(collection(db, PRESENCE_COLLECTION_PATH), where('lastActive', '>=', cutoff));
+            
+            // 警告: 使用 where 條件查詢可能會需要索引。如果報錯，可能需要移除 where 條件並在客戶端過濾。
+            // 為了保持功能，我們暫時保留 where 條件。
+            const q = query(collection(db, PRESENCE_COLLECTION_PATH), where('lastActive', '>', cutoff));
 
             onSnapshot(q, (snapshot) => {
                 const onlineUsers = snapshot.docs.map(doc => ({
@@ -300,8 +316,7 @@
                 if (db && currentUserId) {
                     try {
                         const userDocRef = doc(db, PRESENCE_COLLECTION_PATH, currentUserId);
-                        // 可以考慮刪除文檔或設定一個過期時間戳，這裡暫時不刪除，讓監聽器自動過期
-                        // 但可以在這裡停止 interval
+                        // 停止 interval
                         clearInterval(presenceInterval);
                     } catch (e) {
                         console.warn("清理在線狀態失敗:", e);
@@ -337,7 +352,7 @@
             isSubmitting = true;
             submitBtn.disabled = true;
             submitBtn.innerHTML = `<svg class="animate-spin h-5 w-5 mr-3" viewBox="0 0 24 24" data-lucide="loader"></svg> 正在發送...`;
-            if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+            refreshLucideIcons();
 
 
             try {
@@ -359,7 +374,7 @@
                 isSubmitting = false;
                 submitBtn.disabled = false;
                 submitBtn.innerHTML = `<svg class="h-5 w-5" viewBox="0 0 24 24" data-lucide="send"></svg> 發送`;
-                if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+                refreshLucideIcons();
             }
         }
 
@@ -428,8 +443,7 @@
             }
             
             // 重新渲染 Lucide icon
-            if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
-
+            refreshLucideIcons();
 
             return div;
         }
@@ -445,7 +459,7 @@
                     <svg class="animate-spin h-8 w-8 mx-auto text-indigo-500 mb-3" viewBox="0 0 24 24" data-lucide="loader"></svg>
                     <p class="text-gray-500 font-medium">正在載入留言...</p>
                 </div>`;
-                if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+                refreshLucideIcons();
                 return;
             }
             
@@ -454,7 +468,7 @@
                     <svg class="w-8 h-8 mx-auto text-gray-400 mb-3" viewBox="0 0 24 24" data-lucide="message-square"></svg>
                     <p class="text-gray-500 font-medium">目前沒有留言，快來成為第一個發言的人吧！</p>
                 </div>`;
-                if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+                refreshLucideIcons();
                 return;
             }
 
@@ -491,7 +505,7 @@
                 </div>
             `;
             // 重新渲染 Lucide icon
-            if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+            refreshLucideIcons();
             
             return li;
         }
@@ -548,7 +562,7 @@
                         </div>
                     </div>
                  `;
-                 if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+                 refreshLucideIcons();
                  return;
             }
 
@@ -570,4 +584,55 @@
                         <form id="message-form" class="bg-white p-4 sm:p-6 rounded-2xl shadow-lg border border-indigo-100 mb-6">
                             <div class="flex items-end space-x-3">
                                 <textarea id="message-input" rows="2" class="flex-1 resize-none border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 p-3 text-gray-700 placeholder-gray-400 transition" placeholder="輸入您的公共留言..." maxlength="300"></textarea>
-                                <button id="submit-message-btn" type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-5 rounded-xl shadow-md
+                                <button id="submit-message-btn" type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-5 rounded-xl shadow-md transition duration-200 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed">
+                                    <svg class="h-5 w-5" viewBox="0 0 24 24" data-lucide="send"></svg> 發送
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">請勿發送不當內容。訊息將即時更新。</p>
+                        </form>
+
+                        <!-- 訊息列表 -->
+                        <div id="messages-container" class="space-y-4">
+                            <!-- 訊息內容將在此動態載入 -->
+                        </div>
+                    </div>
+                    
+                    <!-- 在線用戶側邊欄 -->
+                    <div class="w-full lg:w-80 flex-shrink-0 bg-white p-6 rounded-2xl shadow-lg border border-gray-100 h-fit sticky top-10">
+                        <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center space-x-2">
+                            <svg class="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" data-lucide="users"></svg>
+                            <span>在線用戶 (<span id="online-user-count">...</span>)</span>
+                        </h2>
+                        <ul id="online-users-list" class="space-y-3 max-h-96 overflow-y-auto hide-scrollbar">
+                            <!-- 在線用戶列表將在此動態載入 -->
+                        </ul>
+                    </div>
+                </div>
+                
+                <footer class="max-w-7xl mx-auto text-center text-xs text-gray-400 pt-8 mt-8">
+                    &copy; 2024 即時公共留言板 (v${VERSION})。本應用程式使用 Firebase Firestore 儲存公共資料。
+                </footer>
+            `;
+            
+            // 重新渲染 Lucide icon
+            refreshLucideIcons();
+            
+            // 註冊表單提交事件
+            const messageForm = document.getElementById('message-form');
+            if (messageForm) {
+                messageForm.addEventListener('submit', handleMessageSubmit);
+            }
+            
+            // 初始載入訊息和在線用戶 (如果 auth 準備好了)
+            if (isAuthReady) {
+                renderMessages(null); // 顯示載入中
+                renderOnlineUsers([]); // 顯示載入中
+            }
+        }
+
+
+        // --- 啟動應用程式 ---
+        window.onload = initFirebase;
+    </script>
+</body>
+</html>
