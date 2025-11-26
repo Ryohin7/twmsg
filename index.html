@@ -1,22 +1,29 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>即時公共留言板</title>
+    <title>即時多功能留言板</title>
     
-    <!-- Tailwind CSS -->
+    <!-- 載入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Lucide Icons -->
+    <!-- 載入 Lucide Icons (用於美觀的圖標) -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- Google Fonts: Noto Sans TC -->
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+    <!-- Google Fonts: Noto Sans TC (確保中文字體顯示良好) -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
 
     <style>
         body {
             font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f7f9fb;
+            color: #1f2937;
+        }
+        .main-card {
+            background: #FFFFFF;
+            border-radius: 16px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
         }
         .marquee-wrapper {
             overflow: hidden;
@@ -34,819 +41,670 @@
         .break-all-id {
             word-break: break-all;
         }
+        .message-list::-webkit-scrollbar { width: 6px; }
+        .message-list::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+        .message-list::-webkit-scrollbar-track { background: #f3f4f6; }
         .soft-shadow {
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05), 0 10px 15px -3px rgba(0, 0, 0, 0.01);
-        }
-        /* Custom Scrollbar for better aesthetics */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #f1f1f1; 
-            border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #c7c7c7; 
-            border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #a0a0a0; 
-        }
-        
-        .fade-in {
-            animation: fadeIn 0.3s ease-in-out;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.05);
         }
     </style>
 </head>
-<body class="bg-gray-50 min-h-screen text-gray-800">
+<body class="min-h-screen p-4 sm:p-8">
 
-    <div class="max-w-7xl mx-auto p-4 sm:p-8">
-        
-        <!-- Header -->
-        <header class="mb-6 pb-4 border-b-2 border-gray-100">
-            <h1 class="text-3xl sm:text-4xl font-black text-gray-900 flex items-center mb-2">
-                <i data-lucide="message-square" class="text-indigo-600 mr-3 w-8 h-8 sm:w-9 sm:h-9"></i>
-                即時公共留言板
-            </h1>
-            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center text-sm text-gray-500 mt-3 gap-2">
-                <p>使用 Firebase Firestore 實時同步 (HTML版)。</p>
-                <div class="flex flex-wrap gap-4 items-center">
-                    <span class="font-bold text-gray-600 flex items-center">
-                        <i data-lucide="users" class="mr-1 text-green-500 w-4 h-4"></i>
-                        在線: <span id="online-count" class="text-green-600 ml-1">0</span>
-                    </span>
-                    <span class="font-bold text-gray-600 flex items-center">
-                        <i data-lucide="database" id="server-status-icon" class="mr-1 text-gray-500 w-4 h-4"></i>
-                        伺服器: <span id="server-status-text" class="text-gray-500">連線中...</span>
-                    </span>
-                    <span class="font-bold text-gray-600 flex items-center">
-                        <i data-lucide="code" class="mr-1 w-4 h-4"></i>
-                        版本: <span id="app-version">1.8.3</span>
-                    </span>
-                </div>
-            </div>
-
-            <!-- User Profile Section -->
-            <div id="user-profile-section" class="hidden mt-4 p-4 bg-white rounded-3xl soft-shadow border border-gray-100">
-                <div class="flex items-center justify-between flex-wrap gap-2">
-                    <div class="flex items-center">
-                        <span class="font-bold text-gray-700 text-sm flex-shrink-0 mr-4">我的暱稱:</span>
-                        
-                        <!-- View Mode -->
-                        <div id="nickname-view" class="flex items-center space-x-2">
-                            <span id="current-nickname" class="font-extrabold text-indigo-800 text-base">訪客</span>
-                            <span id="admin-badge" class="hidden text-xs text-gray-500 flex items-center"><i data-lucide="crown" class="w-4 h-4 text-yellow-500 fill-yellow-500/50 ml-1"></i> (固定)</span>
-                            <button id="btn-edit-nickname" class="p-1 text-indigo-500 hover:text-indigo-700 rounded-full hover:bg-indigo-100 transition-colors">
-                                <i data-lucide="edit" class="w-4 h-4"></i>
-                            </button>
-                        </div>
-
-                        <!-- Edit Mode -->
-                        <div id="nickname-edit" class="hidden flex items-center space-x-2">
-                            <input type="text" id="input-nickname" class="p-2 border border-indigo-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 text-sm soft-shadow w-32 sm:w-48" placeholder="輸入暱稱" maxlength="12">
-                            <button id="btn-save-nickname" class="px-3 py-1 bg-indigo-600 text-white font-bold rounded-xl soft-shadow hover:bg-indigo-700 transition-colors text-sm">儲存</button>
-                            <button id="btn-cancel-nickname" class="px-3 py-1 bg-gray-300 text-gray-800 font-bold rounded-xl soft-shadow hover:bg-gray-400 transition-colors text-sm">取消</button>
-                        </div>
-                    </div>
-                </div>
-                <div id="nickname-msg" class="hidden mt-2 text-xs font-medium"></div>
-                <div class="mt-3 text-xs font-mono text-gray-600 pt-3 border-t border-gray-100 break-all-id">
-                    <span class="font-bold text-gray-700">我的唯一 ID:</span> <span id="user-id-display">載入中...</span>
-                </div>
-            </div>
-        </header>
-
-        <!-- Version Outdated Warning -->
-        <div id="version-warning" class="hidden p-4 bg-yellow-100 text-yellow-800 rounded-2xl border-2 border-yellow-300 flex items-center justify-between mb-6 soft-shadow flex-wrap">
-            <div class="flex items-center">
-                <i data-lucide="alert-triangle" class="mr-3 flex-shrink-0 text-yellow-600 w-5 h-5"></i>
-                <span class="font-bold text-sm">
-                    發現新版本 (<span id="server-version-display"></span>)！您目前使用的是舊版本，請更新。
-                </span>
-            </div>
-            <button onclick="window.location.reload()" class="ml-4 mt-2 sm:mt-0 px-4 py-2 bg-yellow-500 text-white font-bold rounded-xl shadow-md hover:bg-yellow-600 transition-colors flex items-center text-sm flex-shrink-0">
-                <i data-lucide="refresh-cw" class="mr-2 w-3 h-3"></i> 重新整理
-            </button>
-        </div>
-
-        <!-- Marquee -->
-        <div class="bg-indigo-600 text-white p-3 mb-8 rounded-2xl soft-shadow overflow-hidden border border-indigo-700">
-            <div class="text-sm font-medium flex items-center">
-                <span class="text-yellow-300 font-bold mr-3 flex-shrink-0 flex items-center">
-                    <i data-lucide="zap" class="mr-1 w-3 h-3"></i> 公告:
-                </span>
-                <div class="marquee-wrapper">
-                    <div id="marquee-text" class="marquee-container">
-                        歡迎使用即時留言板！
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="flex flex-col lg:flex-row lg:space-x-8">
-            
-            <!-- Main Content -->
-            <div class="lg:w-2/3 w-full">
-                
-                <!-- Admin Panel (Hidden by default) -->
-                <div id="admin-panel" class="hidden bg-white border-2 border-gray-100 p-6 rounded-3xl soft-shadow mb-8">
-                    <h3 class="text-xl font-extrabold text-gray-800 mb-4 pb-2 border-b border-gray-200 flex items-center">
-                        <i data-lucide="settings" class="mr-2 text-indigo-600 w-5 h-5"></i> 管理員後台
-                    </h3>
-                    <div id="admin-msg" class="hidden p-3 rounded-xl mb-4 text-sm font-medium"></div>
-
-                    <div class="space-y-6">
-                        <!-- Super Admin: Version Control -->
-                        <div id="super-admin-section" class="hidden bg-indigo-50 border border-indigo-200 p-4 rounded-2xl">
-                            <h4 class="text-md font-bold text-gray-800 mb-3 flex items-center">
-                                <i data-lucide="code" class="mr-2 text-indigo-600 w-4 h-4"></i> 應用程式版本控制
-                            </h4>
-                            <div class="flex space-x-2 mb-3">
-                                <input type="text" id="admin-version-input" class="flex-1 p-2 border border-indigo-300 rounded-xl text-sm font-mono" placeholder="版本號 (e.g., 1.8.3)">
-                                <button id="btn-update-version" class="px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl text-sm">設定</button>
-                            </div>
-                        </div>
-
-                        <!-- Maintenance Mode -->
-                        <div class="bg-gray-50 border border-gray-200 p-4 rounded-2xl">
-                            <h4 class="text-md font-bold text-gray-800 mb-3 flex items-center">
-                                <i data-lucide="database" class="mr-2 text-blue-500 w-4 h-4"></i> 系統維護模式
-                                <span id="maintenance-badge" class="ml-3 text-xs font-extrabold px-2 py-0.5 rounded-full bg-green-500 text-white">關閉</span>
-                            </h4>
-                            <div class="flex space-x-3 mb-3">
-                                <button id="btn-maint-on" class="flex-1 px-4 py-2 bg-red-500 text-white font-bold rounded-xl text-sm">開啟維護</button>
-                                <button id="btn-maint-off" class="flex-1 px-4 py-2 bg-green-500 text-white font-bold rounded-xl text-sm">解除維護</button>
-                            </div>
-                            <textarea id="admin-maint-msg" class="w-full p-2 border border-gray-300 rounded-xl text-sm" rows="2"></textarea>
-                        </div>
-
-                        <!-- Marquee Editor -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">編輯跑馬燈公告</label>
-                            <div class="flex space-x-2">
-                                <input type="text" id="admin-marquee-input" class="flex-1 p-2 border border-gray-300 rounded-xl text-sm" maxlength="100">
-                                <button id="btn-update-marquee" class="px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl text-sm flex-shrink-0">更新</button>
-                            </div>
-                        </div>
-
-                        <!-- Clear All (Super Admin) -->
-                        <div id="super-admin-clear" class="hidden">
-                            <label class="block text-sm font-medium text-red-700 mb-1">危險區域</label>
-                            <button id="btn-confirm-clear-open" class="w-full px-4 py-2 bg-red-500 text-white font-bold rounded-xl flex items-center justify-center">
-                                <i data-lucide="trash-2" class="mr-2 w-4 h-4"></i> 刪除所有留言 (不可逆)
-                            </button>
-                        </div>
-                        
-                        <!-- Blocked Users -->
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">封鎖名單</label>
-                            <div id="blocked-list" class="space-y-2 max-h-40 overflow-y-auto bg-gray-50 p-3 border border-gray-200 rounded-xl">
-                                <!-- Blocked users injected here -->
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Error Display -->
-                <div id="error-box" class="hidden p-4 bg-red-100 text-red-700 rounded-xl border border-red-300 flex items-start mb-6 soft-shadow">
-                    <i data-lucide="alert-triangle" class="mr-3 mt-1 flex-shrink-0 w-5 h-5"></i>
-                    <span id="error-text" class="font-medium text-sm"></span>
-                </div>
-
-                <!-- Message Input Form -->
-                <div class="bg-white p-6 rounded-3xl soft-shadow mb-8 sticky top-4 z-10 border border-gray-100">
-                    <textarea id="message-input" class="w-full p-3 border-2 border-gray-200 rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 outline-none resize-none text-base transition duration-150" rows="3" maxlength="500" placeholder="請輸入您的留言..."></textarea>
-                    
-                    <div class="flex justify-between items-center mt-4">
-                        <div class="text-xs text-gray-400 font-mono">
-                            <span id="char-count">0</span> / 500
-                            <span class="ml-3 text-indigo-500 font-bold hidden sm:inline">(Shift + Enter 換行)</span>
-                        </div>
-                        <button id="btn-send" class="px-6 py-2 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700 transition-all duration-200 flex items-center transform hover:scale-[1.02] active:scale-100 disabled:bg-gray-400 disabled:cursor-not-allowed">
-                            <span id="btn-send-text" class="flex items-center"><i data-lucide="send" class="mr-2 w-4 h-4"></i> 發送留言</span>
-                        </button>
-                    </div>
-
-                    <!-- Status hints -->
-                    <div id="maint-hint" class="hidden text-sm font-bold text-red-600 mt-4 p-2 bg-red-100 rounded-xl flex items-center border border-red-300">
-                        <i data-lucide="alert-triangle" class="mr-2 w-4 h-4"></i> <span id="maint-hint-text"></span>
-                    </div>
-                    <div id="blocked-hint" class="hidden text-sm font-bold text-red-600 mt-4 p-2 bg-red-100 rounded-xl flex items-center border border-red-300">
-                        <i data-lucide="alert-triangle" class="mr-2 w-4 h-4"></i> 您已被管理員封鎖。
-                    </div>
-                </div>
-
-                <!-- Message List -->
-                <div class="bg-white p-6 rounded-3xl soft-shadow border border-gray-100 min-h-[200px]">
-                    <h2 class="text-xl font-extrabold text-gray-800 mb-4 pb-2 border-b border-gray-200 flex items-center">
-                        <i data-lucide="message-square" class="mr-2 text-indigo-500 w-5 h-5"></i>
-                        所有留言 (<span id="msg-count">0</span>)
-                    </h2>
-                    
-                    <div id="loading-spinner" class="text-center py-8">
-                        <i data-lucide="loader" class="animate-spin mx-auto text-indigo-500 w-8 h-8 mb-3"></i>
-                        <p class="text-gray-500 font-medium">正在載入留言...</p>
-                    </div>
-
-                    <div id="message-container" class="space-y-4">
-                        <!-- Messages injected here -->
-                    </div>
-                    
-                    <div id="empty-state" class="hidden text-center py-8 bg-gray-50 rounded-2xl border border-gray-200">
-                        <i data-lucide="message-square" class="mx-auto text-gray-400 w-8 h-8 mb-3"></i>
-                        <p class="text-gray-500 font-medium">目前沒有留言，快來成為第一個發言的人吧！</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Sidebar -->
-            <div class="lg:w-1/3 w-full mt-8 lg:mt-0 lg:sticky lg:top-8 h-full">
-                <div class="bg-white p-6 rounded-3xl soft-shadow border border-gray-100">
-                    <h2 class="text-xl font-extrabold text-gray-800 mb-4 pb-2 border-b border-gray-200 flex items-center">
-                        <i data-lucide="list" class="mr-2 text-green-500 w-5 h-5"></i>
-                        在線用戶 (<span id="sidebar-count">0</span>)
-                    </h2>
-                    <div id="online-users-list" class="space-y-2 max-h-96 overflow-y-auto pr-2">
-                        <!-- Online users injected here -->
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <footer class="max-w-7xl mx-auto text-center text-xs text-gray-400 pt-8 mt-8">
-            &copy; 2024 即時公共留言板. Powered by Firebase.
-        </footer>
-    </div>
-
-    <!-- Modals -->
-    <!-- Delete Confirmation -->
-    <div id="modal-delete" class="hidden fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-        <div class="bg-white p-6 rounded-3xl soft-shadow w-full max-w-sm border border-gray-100">
-            <h4 class="text-xl font-bold text-gray-800 mb-4 pb-2 border-b border-gray-200 flex items-center">
-                <i data-lucide="alert-triangle" class="mr-2 text-red-500 w-5 h-5"></i> 確認刪除
-            </h4>
-            <p class="text-gray-700 mb-6 text-sm">
-                您確定要刪除 <span id="del-target-name" class="font-bold"></span> 的這則留言嗎？
-            </p>
-            <div class="flex justify-end space-x-3">
-                <button id="btn-cancel-del" class="px-4 py-2 bg-gray-200 text-gray-800 font-medium rounded-xl hover:bg-gray-300 text-sm">取消</button>
-                <button id="btn-confirm-del" class="px-4 py-2 bg-red-500 text-white font-bold rounded-xl shadow-md hover:bg-red-600 text-sm">確認刪除</button>
+    <div id="app" class="max-w-5xl mx-auto">
+        <!-- 初始載入指示器 -->
+        <div id="loading-spinner" class="flex justify-center items-center h-[50vh]">
+            <div class="text-xl font-bold text-gray-400 flex items-center">
+                <svg class="animate-spin -ml-1 mr-3 h-6 w-6 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                正在連線至 Firebase...
             </div>
         </div>
     </div>
+    
+    <!-- 刪除確認 Modal 容器 -->
+    <div id="modal-delete" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 backdrop-blur-sm p-4"></div>
 
-    <!-- Clear All Confirmation -->
-    <div id="modal-clear" class="hidden fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-        <div class="bg-white p-6 rounded-3xl soft-shadow w-full max-w-sm border border-red-300">
-            <h4 class="text-xl font-bold text-red-700 mb-4 pb-2 border-b border-red-300 flex items-center">
-                <i data-lucide="alert-triangle" class="mr-2 w-5 h-5"></i> 確認清除所有資料
-            </h4>
-            <p class="text-gray-700 mb-6 text-sm">您確定要**刪除所有留言**嗎？此操作不可逆。</p>
-            <div class="flex justify-end space-x-3">
-                <button id="btn-cancel-clear" class="px-4 py-2 bg-gray-200 text-gray-800 font-medium rounded-xl hover:bg-gray-300 text-sm">取消</button>
-                <button id="btn-do-clear" class="px-4 py-2 bg-red-600 text-white font-bold rounded-xl shadow-md hover:bg-red-700 text-sm">確認刪除</button>
-            </div>
-        </div>
-    </div>
+    <!-- 清空確認 Modal 容器 -->
+    <div id="modal-clear" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 backdrop-blur-sm p-4"></div>
 
-    <!-- Logic Script -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { getFirestore, collection, query, onSnapshot, addDoc, serverTimestamp, doc, deleteDoc, getDocs, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-
-        // --- Config ---
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // --- Firebase Imports ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, query, onSnapshot, addDoc, serverTimestamp, doc, deleteDoc, setDoc, getDocs, updateDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-        const VERSION = "1.8.3";
-        const SUPER_ADMIN_ID = "15152491164772220861";
-        const ADMIN_NICKNAME = "管理員";
-        const MESSAGE_COL_PATH = `/artifacts/${appId}/public/data/messages`;
-        const CONFIG_DOC_PATH = `/artifacts/${appId}/public/data/config/general`;
-        const BLOCKED_USERS_DOC_PATH = `/artifacts/${appId}/public/data/config/blockedUsers`;
-        const PRESENCE_COL_PATH = `/artifacts/${appId}/public/data/presence`;
-        const USER_PROFILE_COL_PATH = `/artifacts/${appId}/public/data/user_profiles`;
+        // --- Global Variables (Canvas Mandatory) ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        // --- State ---
+        // --- Constants ---
+        const VERSION = "1.0.0"; 
+        const MAX_MESSAGE_LENGTH = 300;
+        const ADMIN_USER_IDS = ["your_admin_user_id_here"]; // 預留給外部環境配置
+        const MESSAGE_COL_NAME = 'guestbook_messages';
+
+        // --- Firebase Instances ---
+        let app, db, auth;
+        let unsubscribeListeners = [];
+
+        // --- Global State ---
         const state = {
-            db: null,
-            auth: null,
             userId: null,
-            nickname: '訪客',
             isAdmin: false,
             messages: [],
-            onlineUsers: [],
-            blockedUsers: [],
-            config: {
-                marqueeText: '歡迎使用即時留言板！',
+            config: { 
+                marqueeText: '歡迎使用即時留言板！', 
                 isMaintenanceMode: false,
-                maintenanceMessage: '系統維護中...',
-                adminUserIds: [],
-                latestServerVersion: VERSION
+                maintenanceMessage: '系統正在進行維護，請稍後再試。',
+                adminUserIds: ADMIN_USER_IDS,
+                latestServerVersion: VERSION,
             },
-            cooldown: 0,
-            deleteTargetId: null,
-            isComposing: false,
-            userNicknames: {}
+            error: null,
+            isLoading: true,
+            isAuthReady: false,
+            newMessage: '',
+            newNickname: '',
+            deleteTarget: null, // { id, userId }
+            showClearConfirm: false,
         };
 
-        // --- DOM Elements ---
-        const els = {
-            messageInput: document.getElementById('message-input'),
-            btnSend: document.getElementById('btn-send'),
-            btnSendText: document.getElementById('btn-send-text'),
-            messageContainer: document.getElementById('message-container'),
-            onlineList: document.getElementById('online-users-list'),
-            onlineCount: document.getElementById('online-count'),
-            sidebarCount: document.getElementById('sidebar-count'),
-            marqueeText: document.getElementById('marquee-text'),
-            adminPanel: document.getElementById('admin-panel'),
-            serverStatusIcon: document.getElementById('server-status-icon'),
-            serverStatusText: document.getElementById('server-status-text'),
-            loadingSpinner: document.getElementById('loading-spinner'),
-            emptyState: document.getElementById('empty-state'),
-            userProfileSection: document.getElementById('user-profile-section'),
-            userIdDisplay: document.getElementById('user-id-display'),
-            currentNickname: document.getElementById('current-nickname'),
-            inputNickname: document.getElementById('input-nickname'),
-            nicknameView: document.getElementById('nickname-view'),
-            nicknameEdit: document.getElementById('nickname-edit'),
-            errorBox: document.getElementById('error-box'),
-            errorText: document.getElementById('error-text'),
-            adminBadge: document.getElementById('admin-badge'),
-            maintHint: document.getElementById('maint-hint'),
-            maintHintText: document.getElementById('maint-hint-text'),
-            blockedHint: document.getElementById('blocked-hint'),
-            versionWarning: document.getElementById('version-warning'),
-            serverVersionDisplay: document.getElementById('server-version-display'),
-            
-            // Admin Inputs
-            adminMarqueeInput: document.getElementById('admin-marquee-input'),
-            adminMaintMsg: document.getElementById('admin-maint-msg'),
-            adminVersionInput: document.getElementById('admin-version-input'),
-            blockedList: document.getElementById('blocked-list'),
-            superAdminSection: document.getElementById('super-admin-section'),
-            superAdminClear: document.getElementById('super-admin-clear')
+        // --- Path Helpers ---
+        // 公共留言集合路徑
+        const MESSAGE_COL_PATH = (appId) => collection(db, 'artifacts', appId, 'public', 'data', MESSAGE_COL_NAME);
+        // 公共配置文檔路徑
+        const CONFIG_DOC_PATH = (appId) => doc(db, 'artifacts', appId, 'public', 'data', 'config', 'general');
+        
+        // --- DOM Elements Reference ---
+        const els = {};
+
+        /**
+         * 簡單的 DOM 創建輔助函數 (Hypertext helper)
+         * @param {string} tag 
+         * @param {object} props 
+         * @param {(HTMLElement|string)[]} children 
+         * @returns {HTMLElement}
+         */
+        const h = (tag, props = {}, children = []) => {
+            const el = document.createElement(tag);
+            Object.keys(props).forEach(key => {
+                if (key.startsWith('on') && typeof props[key] === 'function') {
+                    el.addEventListener(key.substring(2).toLowerCase(), props[key]);
+                } else if (key === 'className') {
+                    el.className = props[key];
+                } else if (key === 'dataset') {
+                    Object.keys(props.dataset).forEach(dataKey => el.dataset[dataKey] = props.dataset[dataKey]);
+                } else {
+                    el.setAttribute(key, props[key]);
+                }
+            });
+            children.forEach(child => {
+                if (typeof child === 'string') {
+                    el.appendChild(document.createTextNode(child));
+                } else if (child instanceof Node) {
+                    el.appendChild(child);
+                }
+            });
+            return el;
         };
 
-        // --- Initialization ---
-        async function init() {
-            if (!firebaseConfig) {
-                showError("Firebase configuration missing.");
-                return;
-            }
-
-            const app = initializeApp(firebaseConfig);
-            state.db = getFirestore(app);
-            state.auth = getAuth(app);
-
-            // Auth Listener
-            onAuthStateChanged(state.auth, async (user) => {
-                if (user) {
-                    state.userId = user.uid;
-                    updateServerStatus('已連線', 'text-green-500', 'database');
-                    els.userProfileSection.classList.remove('hidden');
-                    els.userIdDisplay.textContent = user.uid;
-                    setupListeners();
-                    startPresence();
-                } else {
-                    if (initialAuthToken) {
-                        await signInWithCustomToken(state.auth, initialAuthToken);
-                    } else {
-                        await signInAnonymously(state.auth);
-                    }
-                }
-            });
-
-            lucide.createIcons();
-        }
-
-        function setupListeners() {
-            // 1. Messages Listener
-            const q = query(collection(state.db, MESSAGE_COL_PATH));
-            onSnapshot(q, (snapshot) => {
-                const msgs = [];
-                snapshot.forEach(doc => {
-                    msgs.push({ id: doc.id, ...doc.data() });
-                });
-                msgs.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-                state.messages = msgs;
-                renderMessages();
-                updateServerStatus('已連線', 'text-green-500', 'database');
-            }, (err) => {
-                console.error(err);
-                showError("無法讀取留言");
-            });
-
-            // 2. Config Listener
-            onSnapshot(doc(state.db, CONFIG_DOC_PATH), (snap) => {
-                if (snap.exists()) {
-                    const data = snap.data();
-                    state.config = { ...state.config, ...data };
-                    updateConfigUI();
-                } else {
-                    // Create default if missing
-                    setDoc(doc(state.db, CONFIG_DOC_PATH), state.config, { merge: true });
-                }
-            });
-
-            // 3. Blocked Users Listener
-            onSnapshot(doc(state.db, BLOCKED_USERS_DOC_PATH), (snap) => {
-                if (snap.exists()) {
-                    state.blockedUsers = snap.data().ids || [];
-                } else {
-                    state.blockedUsers = [];
-                }
-                renderBlockedList(); // For admin
-                updateInputState(); // For user
-            });
-
-            // 4. Presence Listener
-            onSnapshot(collection(state.db, PRESENCE_COL_PATH), (snapshot) => {
-                const threshold = Date.now() - (30 * 1000);
-                const users = [];
-                snapshot.forEach(doc => {
-                    const data = doc.data();
-                    if (data.lastSeen > threshold) {
-                        users.push({ 
-                            id: doc.id, 
-                            nickname: data.nickname, 
-                            isAdmin: data.isAdmin 
-                        });
-                    }
-                });
-                state.onlineUsers = users;
-                renderOnlineUsers();
-            });
-
-            // 5. User Profile Listener
-            onSnapshot(doc(state.db, USER_PROFILE_COL_PATH, state.userId), (snap) => {
-                if (snap.exists()) {
-                    const data = snap.data();
-                    if (!state.isAdmin) {
-                        state.nickname = data.nickname || '訪客';
-                        els.currentNickname.textContent = state.nickname;
-                        els.inputNickname.value = state.nickname;
-                        updateInputPlaceholder();
-                    }
-                }
-            });
-        }
-
-        // --- Logic & Helpers ---
-
-        function isSuperAdmin(id) { return id === SUPER_ADMIN_ID; }
+        /**
+         * 檢查是否為管理員
+         * @param {string} userId 
+         * @returns {boolean}
+         */
+        const checkIsAdmin = (userId) => {
+            return userId && state.config.adminUserIds.includes(userId);
+        };
         
-        function checkAdmin() {
-            const wasAdmin = state.isAdmin;
-            state.isAdmin = isSuperAdmin(state.userId) || state.config.adminUserIds.includes(state.userId);
-            
-            if (state.isAdmin !== wasAdmin) {
-                // Admin status changed
-                if (state.isAdmin) {
-                    els.adminPanel.classList.remove('hidden');
-                    els.adminBadge.classList.remove('hidden');
-                    state.nickname = ADMIN_NICKNAME;
-                    els.currentNickname.textContent = ADMIN_NICKNAME;
-                    
-                    if (isSuperAdmin(state.userId)) {
-                        els.superAdminSection.classList.remove('hidden');
-                        els.superAdminClear.classList.remove('hidden');
-                    }
+        /**
+         * 更新狀態並觸發重新渲染
+         * @param {object} newState 
+         */
+        const setState = (newState) => {
+            Object.assign(state, newState);
+            renderApp();
+        };
+
+        /**
+         * 格式化 Firestore Timestamp
+         * @param {Object} timestamp - Firestore Timestamp object
+         * @returns {string} 
+         */
+        function formatTimestamp(timestamp) {
+            if (!timestamp || !timestamp.seconds) return '時間未知';
+            const date = new Date(timestamp.seconds * 1000);
+            return date.toLocaleString('zh-TW', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+        }
+
+        // --- Listeners ---
+
+        /**
+         * 監聽公共配置文檔
+         */
+        function listenForConfig() {
+            if (!db) return;
+            const configRef = CONFIG_DOC_PATH(appId);
+            const unsubscribe = onSnapshot(configRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    setState({ config: { ...state.config, ...docSnap.data() } });
                 } else {
-                    els.adminPanel.classList.add('hidden');
-                    els.adminBadge.classList.add('hidden');
-                    els.superAdminSection.classList.add('hidden');
+                    // 如果配置文檔不存在，創建一個預設文檔
+                    setDoc(configRef, state.config, { merge: true }).catch(err => console.error("Error creating initial config:", err));
                 }
-            }
+                // 檢查管理員權限
+                setState({ isAdmin: checkIsAdmin(state.userId) });
+            }, (error) => {
+                console.error("Error listening to config:", error);
+                setState({ error: '無法載入配置。' });
+            });
+            unsubscribeListeners.push(unsubscribe);
         }
 
-        function updateConfigUI() {
-            // Check Admin
-            checkAdmin();
+        /**
+         * 監聽留言列表
+         */
+        function listenForMessages() {
+            if (!db) return;
+            const messagesRef = MESSAGE_COL_PATH(appId);
+            // 由於 Firestore 不推薦無索引的 orderBy，我們只獲取數據並在客戶端排序
+            const q = query(messagesRef);
 
-            // Marquee
-            els.marqueeText.textContent = state.config.marqueeText;
-            if(state.isAdmin) els.adminMarqueeInput.value = state.config.marqueeText;
-            
-            // Maintenance
-            const isMaint = state.config.isMaintenanceMode;
-            document.getElementById('maintenance-badge').textContent = isMaint ? '啟動中' : '關閉';
-            document.getElementById('maintenance-badge').className = `ml-3 text-xs font-extrabold px-2 py-0.5 rounded-full text-white ${isMaint ? 'bg-red-500' : 'bg-green-500'}`;
-            
-            if(state.isAdmin) els.adminMaintMsg.value = state.config.maintenanceMessage;
-
-            // Version Check
-            const isOutdated = VERSION !== state.config.latestServerVersion && state.config.latestServerVersion > VERSION;
-            if (isOutdated) {
-                els.versionWarning.classList.remove('hidden');
-                els.serverVersionDisplay.textContent = state.config.latestServerVersion;
-            } else {
-                els.versionWarning.classList.add('hidden');
-            }
-            if(state.isAdmin) els.adminVersionInput.value = state.config.latestServerVersion;
-
-            updateInputState();
-        }
-
-        function updateInputState() {
-            const isBlocked = state.blockedUsers.includes(state.userId);
-            const isMaint = state.config.isMaintenanceMode;
-            const isOutdated = !els.versionWarning.classList.contains('hidden');
-            const canPost = !isBlocked && (!isMaint || state.isAdmin) && !isOutdated;
-
-            els.messageInput.disabled = !canPost || state.cooldown > 0;
-            els.btnSend.disabled = !canPost || state.cooldown > 0 || !els.messageInput.value.trim();
-            
-            // Hints
-            if (isMaint) {
-                els.maintHint.classList.remove('hidden');
-                els.maintHintText.textContent = state.config.maintenanceMessage;
-            } else {
-                els.maintHint.classList.add('hidden');
-            }
-
-            if (isBlocked) {
-                els.blockedHint.classList.remove('hidden');
-            } else {
-                els.blockedHint.classList.add('hidden');
-            }
-        }
-        
-        function updateInputPlaceholder() {
-             els.messageInput.placeholder = `以「${state.isAdmin ? ADMIN_NICKNAME : state.nickname}」的身份發言...`;
-        }
-
-        function startPresence() {
-            const ref = doc(state.db, PRESENCE_COL_PATH, state.userId);
-            const update = () => {
-                setDoc(ref, {
-                    lastSeen: Date.now(),
-                    nickname: state.isAdmin ? ADMIN_NICKNAME : state.nickname,
-                    isAdmin: state.isAdmin
-                }, { merge: true });
-            };
-            update();
-            setInterval(update, 10000);
-        }
-
-        // --- UI Rendering ---
-
-        function renderMessages() {
-            els.loadingSpinner.classList.add('hidden');
-            const count = state.messages.length;
-            document.getElementById('msg-count').textContent = count;
-            
-            if (count === 0) {
-                els.emptyState.classList.remove('hidden');
-                els.messageContainer.innerHTML = '';
-                return;
-            }
-            els.emptyState.classList.add('hidden');
-
-            // Diffing is hard in vanilla, simplified re-render (performance tradeoff acceptable for this size)
-            // Ideally we should do smart updates, but clearing innerHTML is safest for "HTML format" request without frameworks.
-            els.messageContainer.innerHTML = state.messages.map(msg => {
-                const isOwner = msg.userId === state.userId;
-                const isMsgAdmin = isSuperAdmin(msg.userId) || state.config.adminUserIds.includes(msg.userId);
-                const isMsgBlocked = state.blockedUsers.includes(msg.userId);
-                const date = msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString('zh-TW', {hour:'2-digit', minute:'2-digit'}) : '...';
+            const unsubscribe = onSnapshot(q, (snapshot) => {
+                const messages = [];
+                snapshot.forEach(doc => {
+                    messages.push({
+                        id: doc.id,
+                        ...doc.data()
+                    });
+                });
                 
-                // Escape HTML
-                const safeText = msg.text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-                const safeNick = (msg.nickname || '訪客').replace(/</g, "&lt;");
+                // 客戶端排序：按時間戳記降序 (最新在最前面)
+                messages.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
 
-                return `
-                <div class="fade-in flex items-start p-4 rounded-2xl soft-shadow mb-4 ${isOwner ? 'bg-white border-2 border-indigo-200' : 'bg-white border border-gray-100'}">
-                    <div class="flex-shrink-0 w-8 h-8 rounded-full ${isOwner ? 'bg-indigo-500' : 'bg-gray-400'} text-white flex items-center justify-center font-bold mt-1">
-                        <i data-lucide="user" class="w-4 h-4"></i>
-                    </div>
-                    <div class="ml-3 flex-1 min-w-0">
-                        <div class="flex justify-between items-start">
-                            <div class="pr-2">
-                                <p class="text-sm font-bold ${isOwner ? 'text-indigo-700' : 'text-gray-700'}">
-                                    <span class="text-base font-extrabold mr-1 ${isMsgAdmin ? 'text-red-600' : ''}">
-                                        ${safeNick}
-                                        ${isMsgAdmin ? '<i data-lucide="crown" class="inline w-3 h-3 text-yellow-500 ml-1"></i>' : ''}
-                                    </span>
-                                    <span class="text-xs text-gray-400 block sm:inline break-all-id">(${msg.userId.substring(0,8)}...)</span>
-                                    ${isMsgBlocked ? '<span class="text-red-600 ml-1 font-bold text-xs">(已封鎖)</span>' : ''}
-                                </p>
-                            </div>
-                            <div class="flex space-x-1 flex-shrink-0">
-                                ${(state.isAdmin && !isOwner) ? `
-                                    <button onclick="window.toggleBlock('${msg.userId}')" class="px-2 py-0.5 text-xs rounded-md ${isMsgBlocked ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-600'}">
-                                        ${isMsgBlocked ? '解封' : '封鎖'}
-                                    </button>
-                                ` : ''}
-                                ${(isOwner || state.isAdmin) ? `
-                                    <button onclick="window.askDelete('${msg.id}', '${safeNick}')" class="text-red-400 hover:text-red-600 p-1">
-                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                    </button>
-                                ` : ''}
+                setState({ messages: messages });
+            }, (error) => {
+                console.error("Error listening to messages:", error);
+                setState({ error: '無法載入留言列表。' });
+            });
+            unsubscribeListeners.push(unsubscribe);
+        }
+        
+        // --- Handlers ---
+        
+        /**
+         * 處理刪除留言
+         * @param {string} messageId 
+         */
+        async function handleDeleteMessage(messageId) {
+            if (!db || !messageId || !state.userId) return;
+            try {
+                const messageRef = doc(MESSAGE_COL_PATH(appId), messageId);
+                await deleteDoc(messageRef);
+                document.getElementById('modal-delete').classList.add('hidden');
+                setState({ deleteTarget: null });
+            } catch (error) {
+                console.error("Error deleting message:", error);
+                alert('刪除失敗: ' + error.message);
+            }
+        }
+
+        /**
+         * 處理發送新留言
+         * @param {Event} e 
+         */
+        async function handlePostMessage(e) {
+            e.preventDefault();
+            const nickname = els.nicknameInput.value.trim() || '匿名用戶';
+            const message = els.messageInput.value.trim();
+
+            if (state.config.isMaintenanceMode && !state.isAdmin) {
+                alert(state.config.maintenanceMessage);
+                return;
+            }
+
+            if (!message) {
+                alert('留言內容不能為空！');
+                return;
+            }
+
+            if (message.length > MAX_MESSAGE_LENGTH) {
+                alert(`留言長度不能超過 ${MAX_MESSAGE_LENGTH} 字元。`);
+                return;
+            }
+            
+            els.submitButton.disabled = true;
+            els.submitButton.textContent = '發送中...';
+
+            try {
+                await addDoc(MESSAGE_COL_PATH(appId), {
+                    name: nickname,
+                    message: message,
+                    timestamp: serverTimestamp(),
+                    userId: state.userId,
+                });
+
+                els.messageInput.value = '';
+            } catch (error) {
+                console.error("Error posting message:", error);
+                alert('發送留言失敗: ' + error.message);
+            } finally {
+                els.submitButton.disabled = false;
+                els.submitButton.textContent = '送出留言';
+            }
+        }
+
+        /**
+         * 處理管理員清空所有留言
+         */
+        async function handleClearAllMessages() {
+            if (!state.isAdmin) return;
+            
+            document.getElementById('modal-clear').classList.add('hidden');
+            
+            try {
+                const messagesSnapshot = await getDocs(MESSAGE_COL_PATH(appId));
+                const deletePromises = [];
+                messagesSnapshot.forEach(d => {
+                    deletePromises.push(deleteDoc(doc(MESSAGE_COL_PATH(appId), d.id)));
+                });
+                await Promise.all(deletePromises);
+                alert('所有留言已成功清空！');
+            } catch (error) {
+                console.error("Error clearing messages:", error);
+                alert('清空留言失敗: ' + error.message);
+            }
+        }
+
+        // --- Render Components ---
+
+        /**
+         * 渲染單一留言卡片
+         * @param {Object} msg 
+         * @returns {HTMLElement}
+         */
+        function renderMessageCard(msg) {
+            const isCurrentUser = msg.userId === state.userId;
+            const isAuthorizedToDelete = isCurrentUser || state.isAdmin;
+
+            const card = h('div', {
+                className: `p-4 rounded-xl soft-shadow transition duration-200 relative ${
+                    isCurrentUser 
+                    ? 'bg-indigo-100 border-l-4 border-indigo-500' 
+                    : 'bg-white border-l-4 border-gray-200'
+                }`
+            }, [
+                // Header: Nickname and Timestamp
+                h('div', { className: 'flex justify-between items-start mb-1' }, [
+                    h('div', { className: 'flex flex-col' }, [
+                        h('span', { 
+                            className: `font-bold text-lg ${isCurrentUser ? 'text-indigo-800' : 'text-gray-800'}`
+                        }, [
+                            msg.name || '匿名用戶',
+                            isCurrentUser ? h('span', { className: 'ml-2 text-xs font-normal text-indigo-500' }, '(您)') : '',
+                        ]),
+                        h('span', { className: 'text-xs text-gray-400 break-all-id' }, [`ID: ${msg.userId || '未知'}`])
+                    ]),
+                    h('span', { className: 'text-xs text-gray-500 whitespace-nowrap' }, [formatTimestamp(msg.timestamp)])
+                ]),
+                
+                // Content
+                h('p', { className: 'text-gray-600 whitespace-pre-wrap mt-2' }, [msg.message]),
+
+                // Delete Button (only for admin or self)
+                isAuthorizedToDelete ? h('button', {
+                    className: 'absolute top-2 right-2 p-1 text-gray-400 hover:text-red-500 transition',
+                    title: '刪除留言',
+                    onclick: () => setState({ deleteTarget: { id: msg.id, userId: msg.userId } })
+                }, [
+                    h('i', { className: 'lucide lucide-trash-2 w-4 h-4', 'data-lucide': 'trash-2' })
+                ]) : ''
+            ]);
+            
+            // Render Lucide icons manually after creation
+            setTimeout(() => {
+                const icons = card.querySelectorAll('[data-lucide]');
+                icons.forEach(icon => lucide.createIcons({ icons: { 'trash-2': lucide.icons['trash-2'] }, attrs: { class: icon.className, 'data-lucide': icon.dataset.lucide } }));
+            }, 0);
+
+            return card;
+        }
+
+        /**
+         * 渲染管理面板
+         * @returns {HTMLElement}
+         */
+        function renderAdminPanel() {
+            if (!state.isAdmin) return h('div');
+
+            return h('div', { className: 'mt-8 p-6 bg-red-50 border border-red-200 rounded-xl shadow-inner' }, [
+                h('h2', { className: 'text-2xl font-bold text-red-700 mb-4 flex items-center' }, [
+                    h('i', { className: 'lucide lucide-shield-half mr-2 w-5 h-5', 'data-lucide': 'shield-half' }),
+                    '管理員控制台'
+                ]),
+                
+                // 維護模式
+                h('div', { className: 'space-y-3 p-4 bg-white rounded-lg soft-shadow mb-4' }, [
+                    h('h3', { className: 'text-lg font-semibold text-red-600' }, ['系統維護模式']),
+                    h('div', { className: 'flex space-x-2' }, [
+                        els.adminMaintMsg = h('input', {
+                            type: 'text',
+                            placeholder: state.config.maintenanceMessage || '系統維護中...',
+                            className: 'flex-grow px-3 py-2 border rounded-lg focus:ring-red-500'
+                        }),
+                        h('button', {
+                            id: 'btn-maint-on',
+                            className: 'px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition'
+                        }, ['開啟維護']),
+                        h('button', {
+                            id: 'btn-maint-off',
+                            className: 'px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition'
+                        }, ['關閉維護']),
+                    ]),
+                    h('p', { className: `text-sm font-medium ${state.config.isMaintenanceMode ? 'text-red-600' : 'text-green-600'}` }, [
+                        '當前狀態：',
+                        state.config.isMaintenanceMode ? '已開啟' : '已關閉'
+                    ])
+                ]),
+
+                // 跑馬燈
+                h('div', { className: 'space-y-3 p-4 bg-white rounded-lg soft-shadow mb-4' }, [
+                    h('h3', { className: 'text-lg font-semibold text-red-600' }, ['跑馬燈公告']),
+                    h('div', { className: 'flex space-x-2' }, [
+                        els.adminMarqueeInput = h('input', {
+                            type: 'text',
+                            placeholder: state.config.marqueeText,
+                            className: 'flex-grow px-3 py-2 border rounded-lg focus:ring-red-500'
+                        }),
+                        h('button', {
+                            id: 'btn-update-marquee',
+                            className: 'px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition'
+                        }, ['更新跑馬燈'])
+                    ])
+                ]),
+
+                // 清空留言
+                h('div', { className: 'mt-6 pt-4 border-t border-red-200 flex justify-end' }, [
+                    h('button', {
+                        id: 'btn-confirm-clear-open',
+                        className: 'px-4 py-2 bg-red-700 text-white rounded-lg font-semibold hover:bg-red-800 transition'
+                    }, ['清空所有留言'])
+                ]),
+            ]);
+        }
+
+        /**
+         * 渲染刪除確認 Modal
+         * @returns {HTMLElement}
+         */
+        function renderDeleteModal() {
+            const modal = document.getElementById('modal-delete');
+            if (!state.deleteTarget) {
+                modal.classList.add('hidden');
+                return;
+            }
+
+            modal.classList.remove('hidden');
+            
+            const targetId = state.deleteTarget.id;
+            const targetUserId = state.deleteTarget.userId;
+
+            modal.innerHTML = '';
+            modal.appendChild(h('div', { className: 'bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm' }, [
+                h('h3', { className: 'text-xl font-bold text-gray-800 mb-4' }, ['確認刪除']),
+                h('p', { className: 'text-gray-600 mb-6' }, [
+                    '您確定要刪除這則留言嗎？',
+                    h('br'),
+                    h('span', { className: 'text-sm text-red-500 break-all-id' }, [`ID: ${targetId}`])
+                ]),
+                h('div', { className: 'flex justify-end space-x-3' }, [
+                    h('button', {
+                        className: 'px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition',
+                        onclick: () => setState({ deleteTarget: null })
+                    }, ['取消']),
+                    h('button', {
+                        className: 'px-4 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition',
+                        onclick: () => handleDeleteMessage(targetId)
+                    }, ['確定刪除'])
+                ])
+            ]));
+        }
+
+        /**
+         * 渲染清空確認 Modal
+         * @returns {HTMLElement}
+         */
+        function renderClearModal() {
+            const modal = document.getElementById('modal-clear');
+            
+            modal.innerHTML = '';
+            modal.appendChild(h('div', { className: 'bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm' }, [
+                h('h3', { className: 'text-xl font-bold text-red-700 mb-4' }, ['⚠️ 警告：清空所有留言']),
+                h('p', { className: 'text-gray-600 mb-6' }, [
+                    '這將會永久刪除所有用戶發布的留言，此操作無法撤銷。您確定要繼續嗎？'
+                ]),
+                h('div', { className: 'flex justify-end space-x-3' }, [
+                    h('button', {
+                        id: 'btn-cancel-clear',
+                        className: 'px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition',
+                        onclick: () => modal.classList.add('hidden')
+                    }, ['取消']),
+                    h('button', {
+                        id: 'btn-do-clear',
+                        className: 'px-4 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition',
+                        onclick: handleClearAllMessages
+                    }, ['確認清空'])
+                ])
+            ]));
+
+             // Attach listener to open button after main render
+            if (state.isAdmin) {
+                document.getElementById('btn-confirm-clear-open').onclick = () => modal.classList.remove('hidden');
+            }
+        }
+
+        /**
+         * 主渲染函數，用於更新 UI 的各個部分
+         */
+        function renderApp() {
+            const appEl = document.getElementById('app');
+            if (state.isLoading) return; 
+
+            // 移除載入指示器
+            const spinner = document.getElementById('loading-spinner');
+            if (spinner) spinner.remove();
+
+            // 主應用程式結構
+            if (!document.getElementById('main-content')) {
+                appEl.innerHTML = `
+                    <div id="main-content" class="main-card p-6 md:p-10">
+                        <!-- Header -->
+                        <header class="text-center mb-6">
+                            <h1 class="text-4xl font-extrabold text-indigo-700 mb-2">即時公共留言板</h1>
+                            <p id="user-info" class="text-sm text-gray-500 mt-1 break-all-id"></p>
+                            <p id="version-info" class="text-xs text-gray-400 mt-1">版本: ${VERSION} / 服務器版本: ${state.config.latestServerVersion}</p>
+                        </header>
+
+                        <!-- Marquee -->
+                        <div id="marquee-banner" class="mb-6 py-2 px-4 bg-yellow-100 text-yellow-800 font-semibold rounded-lg overflow-hidden soft-shadow">
+                            <div class="marquee-wrapper">
+                                <div id="marquee-text" class="marquee-container"></div>
                             </div>
                         </div>
-                        <p class="text-gray-900 mt-1 whitespace-pre-wrap break-words leading-relaxed">${safeText}</p>
-                        <p class="text-xs text-gray-400 mt-2">${date}</p>
+
+                        <!-- Maintenance Mode Alert -->
+                        <div id="maint-alert" class="hidden mb-6 p-4 bg-red-100 border border-red-300 text-red-700 rounded-lg font-medium"></div>
+
+                        <!-- Main Grid Layout -->
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <!-- Left: Post Form -->
+                            <div class="order-2 lg:order-1">
+                                <h2 class="text-2xl font-bold text-gray-800 mb-4">發表新留言</h2>
+                                <form id="post-form" class="p-6 bg-indigo-50 rounded-xl shadow-inner space-y-4"></form>
+                            </div>
+                            <!-- Right: Message List -->
+                            <div class="order-1 lg:order-2">
+                                <h2 class="text-2xl font-bold text-gray-800 mb-4">所有留言 (${state.messages.length} 則)</h2>
+                                <div id="messages-list" class="message-list h-[500px] overflow-y-auto space-y-4 p-2 bg-gray-50 rounded-xl border border-gray-200"></div>
+                            </div>
+                        </div>
+
+                        <!-- Admin Panel Container -->
+                        <div id="admin-panel-container"></div>
                     </div>
-                </div>
                 `;
-            }).join('');
+                // 設置 DOM 元素的引用
+                els.userInfo = document.getElementById('user-info');
+                els.marqueeText = document.getElementById('marquee-text');
+                els.maintAlert = document.getElementById('maint-alert');
+                els.messagesList = document.getElementById('messages-list');
+                els.postForm = document.getElementById('post-form');
+                els.adminPanelContainer = document.getElementById('admin-panel-container');
+
+                // 渲染表單
+                els.postForm.innerHTML = '';
+                els.postForm.appendChild(h('div', { className: 'space-y-4' }, [
+                    h('label', { className: 'block text-sm font-medium text-gray-700' }, ['暱稱']),
+                    els.nicknameInput = h('input', {
+                        type: 'text',
+                        placeholder: '可選填 (預設: 匿名用戶)',
+                        className: 'w-full px-4 py-2 border border-indigo-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition shadow-sm',
+                        maxLength: 12
+                    }),
+                    h('label', { className: 'block text-sm font-medium text-gray-700 mt-2' }, [`留言內容 (限 ${MAX_MESSAGE_LENGTH} 字)`]),
+                    els.messageInput = h('textarea', {
+                        rows: 4,
+                        required: true,
+                        placeholder: '請輸入您的留言...',
+                        className: 'w-full px-4 py-2 border border-indigo-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition shadow-sm resize-none',
+                        maxLength: MAX_MESSAGE_LENGTH
+                    }),
+                    els.submitButton = h('button', {
+                        type: 'submit',
+                        className: 'w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition shadow-md disabled:opacity-50 disabled:cursor-not-allowed',
+                        disabled: !state.isAuthReady
+                    }, [state.isAuthReady ? '送出留言' : '正在初始化...'])
+                ]));
+                els.postForm.onsubmit = handlePostMessage;
+            }
+
+            // --- Dynamic Updates ---
+
+            // 1. 更新使用者 ID
+            els.userInfo.textContent = `當前用戶 ID: ${state.userId || '連線中...'}`;
+
+            // 2. 更新跑馬燈
+            els.marqueeText.textContent = state.config.marqueeText;
             
-            lucide.createIcons();
-        }
-
-        function renderOnlineUsers() {
-            // Sort
-            state.onlineUsers.sort((a, b) => {
-                if (a.id === state.userId) return -1;
-                if (b.id === state.userId) return 1;
-                if (a.isAdmin && !b.isAdmin) return -1;
-                if (!a.isAdmin && b.isAdmin) return 1;
-                return a.nickname.localeCompare(b.nickname);
-            });
-
-            els.onlineCount.textContent = state.onlineUsers.length;
-            els.sidebarCount.textContent = state.onlineUsers.length;
-            
-            els.onlineList.innerHTML = state.onlineUsers.map(u => `
-                <div class="p-3 rounded-xl flex items-center justify-between text-sm soft-shadow-sm transition-colors duration-150 ${u.id === state.userId ? 'bg-indigo-50 border border-indigo-200' : 'bg-gray-50'}">
-                    <div class="flex items-center space-x-2 truncate min-w-0">
-                        <i data-lucide="globe" class="w-4 h-4 ${u.id === state.userId ? 'text-indigo-600' : 'text-green-500'}"></i>
-                        <span class="font-extrabold ${u.isAdmin ? 'text-red-600' : 'text-gray-800'} truncate">
-                            ${u.nickname}
-                        </span>
-                        ${u.isAdmin ? '<i data-lucide="crown" class="w-3 h-3 text-yellow-500"></i>' : ''}
-                    </div>
-                    <span class="text-xs font-mono ml-2 text-gray-400 break-all-id">${u.id.substring(0,8)}...</span>
-                </div>
-            `).join('');
-            lucide.createIcons();
-        }
-        
-        function renderBlockedList() {
-            els.blockedList.innerHTML = state.blockedUsers.length === 0 
-                ? '<p class="text-gray-500 text-xs">無</p>' 
-                : state.blockedUsers.map(uid => `
-                    <div class="flex justify-between items-center p-2 bg-white rounded-lg border border-gray-100 text-xs">
-                        <span class="font-mono text-gray-600 break-all-id mr-2">${uid}</span>
-                        <button onclick="window.toggleBlock('${uid}')" class="text-green-600 font-bold">解除</button>
-                    </div>
-                `).join('');
-        }
-
-        function updateServerStatus(text, colorClass, iconName) {
-            els.serverStatusText.textContent = text;
-            els.serverStatusText.className = colorClass;
-            // Update icon needs DOM manipulation
-            // Simplified: just text update for status usually enough
-        }
-
-        function showError(msg) {
-            els.errorBox.classList.remove('hidden');
-            els.errorText.textContent = msg;
-            setTimeout(() => els.errorBox.classList.add('hidden'), 5000);
-        }
-
-        // --- Actions ---
-
-        window.toggleBlock = async (uid) => {
-            if(!state.isAdmin) return;
-            let newList;
-            if (state.blockedUsers.includes(uid)) {
-                newList = state.blockedUsers.filter(id => id !== uid);
+            // 3. 更新維護模式警報
+            if (state.config.isMaintenanceMode) {
+                els.maintAlert.classList.remove('hidden');
+                els.maintAlert.textContent = `⚠️ 系統公告：${state.config.maintenanceMessage}`;
             } else {
-                newList = [...state.blockedUsers, uid];
+                els.maintAlert.classList.add('hidden');
             }
-            await setDoc(doc(state.db, BLOCKED_USERS_DOC_PATH), { ids: newList }, { merge: true });
-        };
 
-        window.askDelete = (id, nick) => {
-            state.deleteTargetId = id;
-            document.getElementById('del-target-name').textContent = nick;
-            document.getElementById('modal-delete').classList.remove('hidden');
-        };
+            // 4. 更新留言列表
+            els.messagesList.innerHTML = '';
+            if (state.messages.length === 0) {
+                els.messagesList.appendChild(h('p', { className: 'text-center text-gray-500 p-4' }, ['目前沒有留言。']));
+            } else {
+                state.messages.forEach(msg => {
+                    els.messagesList.appendChild(renderMessageCard(msg));
+                });
+                // 保持滾動到底部
+                els.messagesList.scrollTop = els.messagesList.scrollHeight;
+            }
+            
+            // 5. 更新管理面板
+            els.adminPanelContainer.innerHTML = '';
+            els.adminPanelContainer.appendChild(renderAdminPanel());
 
-        async function doDelete() {
-            if (!state.deleteTargetId) return;
-            try {
-                await deleteDoc(doc(state.db, MESSAGE_COL_PATH, state.deleteTargetId));
-                document.getElementById('modal-delete').classList.add('hidden');
-            } catch(e) { console.error(e); showError("刪除失敗"); }
+            // 6. 渲染 Modals
+            renderDeleteModal();
+            renderClearModal();
+
+            // 確保 Lucide Icons 在管理面板渲染後創建
+            lucide.createIcons();
+
+            // 7. 重新掛載管理員按鈕事件 (需要在元素存在後)
+            if (state.isAdmin) {
+                // Marquee
+                document.getElementById('btn-update-marquee').onclick = async () => {
+                    const val = els.adminMarqueeInput.value.trim();
+                    if (val) await setDoc(CONFIG_DOC_PATH(appId), { marqueeText: val }, { merge: true });
+                };
+                // Maintenance ON
+                document.getElementById('btn-maint-on').onclick = async () => {
+                    const msg = els.adminMaintMsg.value || '系統維護中...';
+                    await setDoc(CONFIG_DOC_PATH(appId), { isMaintenanceMode: true, maintenanceMessage: msg }, { merge: true });
+                };
+                // Maintenance OFF
+                document.getElementById('btn-maint-off').onclick = async () => {
+                    await setDoc(CONFIG_DOC_PATH(appId), { isMaintenanceMode: false }, { merge: true });
+                };
+            }
         }
 
-        // --- Event Listeners ---
-        
-        // Send Message
-        els.btnSend.onclick = async () => {
-            const text = els.messageInput.value.trim();
-            if (!text || state.cooldown > 0) return;
-            
-            // Cooldown logic
-            state.cooldown = 5;
-            els.btnSend.disabled = true;
-            const timer = setInterval(() => {
-                state.cooldown--;
-                els.btnSendText.textContent = `請稍候 (${state.cooldown}s)`;
-                if (state.cooldown <= 0) {
-                    clearInterval(timer);
-                    els.btnSendText.innerHTML = '<i data-lucide="send" class="mr-2 w-4 h-4"></i> 發送留言';
-                    updateInputState();
-                    lucide.createIcons();
-                }
-            }, 1000);
+        /**
+         * 初始化所有 Firebase 服務並設置監聽器
+         */
+        async function initializeAppAndListeners() {
+            if (Object.keys(firebaseConfig).length === 0) {
+                console.error("Firebase configuration is missing.");
+                document.getElementById('loading-spinner').innerHTML = `<p class="text-red-500 text-center text-lg">錯誤：Firebase 設定遺失。請提供設定。</p>`;
+                return;
+            }
 
             try {
-                await addDoc(collection(state.db, MESSAGE_COL_PATH), {
-                    userId: state.userId,
-                    nickname: state.isAdmin ? ADMIN_NICKNAME : state.nickname,
-                    text: text,
-                    timestamp: serverTimestamp()
+                setLogLevel('Debug');
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // 執行身份驗證
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // 監聽認證狀態變化
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        setState({ 
+                            userId: user.uid, 
+                            isAuthReady: true,
+                            isAdmin: checkIsAdmin(user.uid), // 第一次檢查管理員權限
+                            isLoading: false, 
+                        });
+                        
+                        // 認證完成後，開始監聽資料
+                        listenForConfig();
+                        listenForMessages();
+                    } else {
+                         // 匿名登入失敗或登出
+                         setState({ userId: '未知', isAuthReady: true, isLoading: false });
+                    }
                 });
-                els.messageInput.value = '';
-                document.getElementById('char-count').textContent = '0';
-            } catch(e) {
-                console.error(e);
-                showError("發送失敗");
+
+            } catch (error) {
+                console.error("Firebase 初始化或登入失敗:", error);
+                document.getElementById('loading-spinner').innerHTML = `<p class="text-red-500 text-center text-lg">初始化失敗：${error.message}</p>`;
+                setState({ error: '初始化失敗', isLoading: false });
             }
-        };
+        }
 
-        // Textarea events
-        els.messageInput.addEventListener('input', (e) => {
-            document.getElementById('char-count').textContent = e.target.value.length;
-            els.btnSend.disabled = !e.target.value.trim() || state.cooldown > 0;
-        });
-        els.messageInput.addEventListener('compositionstart', () => state.isComposing = true);
-        els.messageInput.addEventListener('compositionend', () => state.isComposing = false);
-        els.messageInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                if (!state.isComposing) els.btnSend.click();
-            }
-        });
-
-        // Nickname Edit
-        document.getElementById('btn-edit-nickname').onclick = () => {
-            els.nicknameView.classList.add('hidden');
-            els.nicknameEdit.classList.remove('hidden');
-            els.inputNickname.focus();
-        };
-        document.getElementById('btn-cancel-nickname').onclick = () => {
-            els.nicknameView.classList.remove('hidden');
-            els.nicknameEdit.classList.add('hidden');
-        };
-        document.getElementById('btn-save-nickname').onclick = async () => {
-            const val = els.inputNickname.value.trim();
-            if (val && val.length <= 12) {
-                await setDoc(doc(state.db, USER_PROFILE_COL_PATH, state.userId), { nickname: val }, { merge: true });
-                state.nickname = val;
-                els.currentNickname.textContent = val;
-                els.nicknameView.classList.remove('hidden');
-                els.nicknameEdit.classList.add('hidden');
-                updateInputPlaceholder();
-            }
-        };
-
-        // Modal Actions
-        document.getElementById('btn-cancel-del').onclick = () => document.getElementById('modal-delete').classList.add('hidden');
-        document.getElementById('btn-confirm-del').onclick = doDelete;
-        
-        // Admin Actions
-        document.getElementById('btn-update-marquee').onclick = async () => {
-            const val = els.adminMarqueeInput.value.trim();
-            if (val) await setDoc(doc(state.db, CONFIG_DOC_PATH), { marqueeText: val }, { merge: true });
-        };
-        document.getElementById('btn-maint-on').onclick = async () => {
-            const msg = els.adminMaintMsg.value || '系統維護中...';
-            await setDoc(doc(state.db, CONFIG_DOC_PATH), { isMaintenanceMode: true, maintenanceMessage: msg }, { merge: true });
-        };
-        document.getElementById('btn-maint-off').onclick = async () => {
-            await setDoc(doc(state.db, CONFIG_DOC_PATH), { isMaintenanceMode: false }, { merge: true });
-        };
-        document.getElementById('btn-update-version').onclick = async () => {
-            const val = els.adminVersionInput.value.trim();
-            if(val) await setDoc(doc(state.db, CONFIG_DOC_PATH), { latestServerVersion: val }, { merge: true });
-        };
-        
-        // Clear All
-        document.getElementById('btn-confirm-clear-open').onclick = () => document.getElementById('modal-clear').classList.remove('hidden');
-        document.getElementById('btn-cancel-clear').onclick = () => document.getElementById('modal-clear').classList.add('hidden');
-        document.getElementById('btn-do-clear').onclick = async () => {
-            document.getElementById('modal-clear').classList.add('hidden');
-            const snap = await getDocs(collection(state.db, MESSAGE_COL_PATH));
-            snap.forEach(d => deleteDoc(d.ref));
-        };
-
-        // Start App
-        init();
-
+        // 頁面載入完成後初始化
+        window.onload = initializeAppAndListeners;
     </script>
 </body>
 </html>
